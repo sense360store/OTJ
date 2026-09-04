@@ -57,7 +57,7 @@ const FUNCTIONS = join(process.cwd(), 'supabase', 'functions')
    the consumer does with it. */
 const REVIEWED_CONSUMERS = [
   'src/lib/data.ts', // the Team model carries sortOrder
-  'src/lib/queries.ts', // the read carries sort_order; the save writes it and nothing else
+  'src/lib/queries.ts', // the read carries sort_order; the save is the one rpc call and writes nothing
   'src/lib/teamOrder.ts', // every rule about the order
 ]
 /* The one screen. It never names the column or the field itself: it reads
@@ -398,8 +398,10 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     expect(screen).toMatch(/snapshotAfterRead\(draft\.expected, read\)/)
     // After its own save the snapshot is what the save wrote, never a read,
     // and a draft is made for that comparison whether or not one existed.
-    expect(screen).toMatch(/const intended = intendedPositions\(vars\.orderedIds\)/)
-    expect(screen).toMatch(/setDraft\(\{ ids: vars\.orderedIds, expected: intended \}\)/)
+    // The rule itself is in teamOrder.ts and is tested there; the screen
+    // only has to hand it the ids it sent.
+    expect(screen).toMatch(/setSavedAs\(intendedPositions\(vars\.orderedIds\)\)/)
+    expect(screen).toMatch(/setDraft\(draftAfterSaved\(vars\.orderedIds\)\)/)
     // The success note is derived from the read agreeing with what was
     // saved, never a flag set true on success and cleared by hand.
     expect(screen).toMatch(/const orderSaved = savedAs !== null && positionsAgree\(savedAs, teamPositions\(teams\)\)/)
@@ -435,22 +437,18 @@ describe('only the reviewed COACH-1B boundary consumes the column', () => {
     expect(hook.indexOf('onError:')).toBeLessThan(hook.indexOf('onSettled:'))
     const screen = withoutComments(read('routes/AdminTeams.tsx'))
     expect(screen).toMatch(/useSaveTeamOrder\(\{/)
-    // A failure that is not a refused concurrency keeps BOTH the
-    // arrangement that was sent AND the snapshot it was drawn from.
-    // Clearing the snapshot lets a read landing in that window be adopted
-    // wholesale, so another admin's order becomes this screen's expected
-    // and the next press overwrites it. A kept snapshot can only cause a
-    // refusal or a drop; a cleared one can cause a silent overwrite.
-    expect(screen).toMatch(/else setDraft\(\{ ids: vars\.orderedIds, expected: vars\.expected \}\)/)
+    // Both outcomes DELEGATE. The rule that a failure which is not a
+    // refused concurrency keeps BOTH the arrangement that was sent AND the
+    // snapshot it was drawn from is stated and exercised in teamOrder.ts;
+    // what the screen must not do is decide it again here, because a second
+    // implementation is how the two come to disagree. So the callbacks pass
+    // the outcome straight through, and no error class is examined on this
+    // screen at all.
+    expect(screen).toMatch(/setDraft\(draftAfterFailure\(error, vars\)\)/)
+    expect(screen).not.toMatch(/instanceof TeamOrder/)
+    expect(screen).not.toMatch(/expected: vars\.expected \}\)/)
     expect(screen).not.toMatch(/expected: null \}\)/)
     expect(screen).not.toMatch(/d === null \? null/)
-    // Two branches only, because the function is atomic: another admin's
-    // order (nothing written, drop the draft) and everything else (nothing
-    // written, or unknown for a transport failure, so keep the arrangement
-    // that was sent and clear the snapshot). A third branch keeping the
-    // snapshot would be a claim about what is stored that this client
-    // cannot make.
-    expect(screen).toMatch(/if \(error instanceof TeamOrderChanged\) setDraft\(null\)/)
     expect(screen).not.toMatch(/TeamOrderReadFailed/)
     // The mutate call carries the variables and nothing else.
     expect(screen).toMatch(/save\.mutate\(\{ orderedIds: draftIds, expected: draft\?\.expected \?\? teamPositions\(teams\) \}\)/)

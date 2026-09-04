@@ -314,3 +314,77 @@ export function saveFailureMessage(error: unknown): string {
   }
   return `${lead} It is not known whether it reached the server, so the list has been refreshed to show what is stored. Check it and save again if it is not the order you arranged.`
 }
+
+/* ---- what the draft becomes after a save ----
+
+   One rule rather than two callback bodies. It lived inside
+   `useSaveTeamOrder`'s handlers on the Teams screen, where the only thing
+   holding it was a source text tripwire: the screen tests are static
+   renders, so nothing drove either callback, and the invariant test pinned
+   the exact literal of each body instead. That does catch a mutation of it,
+   which was checked rather than assumed, but it pins the SHAPE of the code
+   and says nothing about whether the rule is right, and any honest edit to
+   the callback has to edit a regex in step. This is the rule that decides
+   whether another admin's order can be silently overwritten, so it is worth
+   testing rather than transcribing; extracted, it is exercised directly and
+   the tripwire only has to say the screen delegates to it.
+
+   The draft is what the screen is showing and the snapshot is what the next
+   save will claim was stored. They are kept together because a draft beside
+   the WRONG snapshot is the dangerous shape: the arrangement on screen is
+   compared against positions nobody drew it from. */
+export interface OrderDraft {
+  ids: string[]
+  expected: TeamPosition[] | null
+}
+
+/* After a save the function accepted. The refetch will carry exactly what
+   was written, so the snapshot becomes that: the save's own readback is then
+   not taken for another admin's change, and a read that DIFFERS from it is
+   one. A draft is kept, or made where an unset or incomplete club accepted
+   the order shown without a move, for exactly that comparison, and
+   `snapshotAfterRead` drops it again the moment the read agrees. */
+export function draftAfterSaved(orderedIds: readonly string[]): OrderDraft {
+  return { ids: [...orderedIds], expected: intendedPositions(orderedIds) }
+}
+
+/* After a save that failed. Two answers, and THE SNAPSHOT IS ALWAYS KEPT.
+
+   TeamOrderChanged is another admin's order landing under the draft. The
+   function refuses before writing, so nothing was stored, and the draft is
+   dropped: the refetched truth is what the list shows and the refusal says
+   so.
+
+   Every other failure keeps the arrangement that was SENT as the draft, made
+   into one where the club accepted the order shown without a move so a
+   no-move save that fails never adopts an order nobody chose, AND keeps the
+   positions the draft was drawn from.
+
+   Clearing that snapshot was a defect, and the reasoning that produced it
+   was "nothing was written, so the next read can be adopted as it comes".
+   The missing half is that nothing was written BY US says nothing about what
+   anybody else wrote. With the snapshot cleared, a read landing in that
+   window is adopted wholesale, so another admin's order becomes this
+   screen's expected snapshot while the older draft is still on screen, and
+   the next press sends an expected that matches what is stored: the function
+   accepts, and their order is silently overwritten.
+
+   Keeping it is safe in every case, which is why there is no third branch
+   for the transport failure whose outcome this client cannot know. If the
+   call never landed and nothing else changed, the read agrees with the
+   snapshot and the arrangement survives for one more press. If somebody else
+   changed the order, the read disagrees and the draft is dropped. If the
+   call DID land, the read disagrees too, and the draft is dropped: the
+   wording is then a little generous to another admin, but the outcome is a
+   refreshed list rather than an overwrite. A kept snapshot can only ever
+   cause a refusal or a drop; a cleared one can cause a silent overwrite.
+
+   There is no branch for a half written order, because the function cannot
+   leave one. */
+export function draftAfterFailure(
+  error: unknown,
+  sent: { orderedIds: readonly string[]; expected: readonly TeamPosition[] },
+): OrderDraft | null {
+  if (error instanceof TeamOrderChanged) return null
+  return { ids: [...sent.orderedIds], expected: sent.expected.map((p) => ({ ...p })) }
+}

@@ -44,8 +44,9 @@ import { BIB_COLOURS, bibSwatch } from '../lib/bibs'
 import { sessionCoversAnyTeam } from '../lib/sessionTeams'
 import {
   TEAM_ORDER_CHANGED,
-  TeamOrderChanged,
   clubOrder,
+  draftAfterFailure,
+  draftAfterSaved,
   moveTeam,
   reconcileDraft,
   sameIdOrder,
@@ -57,7 +58,7 @@ import {
   teamPositions,
   teamsInDraftOrder,
 } from '../lib/teamOrder'
-import type { ClubOrderState, MoveDirection, TeamPosition } from '../lib/teamOrder'
+import type { ClubOrderState, MoveDirection, OrderDraft, TeamPosition } from '../lib/teamOrder'
 import { Icon } from '../components/icons'
 import { Empty, ErrorNote, Loading, Modal } from '../components/ui'
 import { Button, Card, IconButton, Note, PageHeader, SelectField, TextField } from '../components/primitives'
@@ -369,56 +370,18 @@ export function AdminTeams() {
      run after that read had landed, which is too late to set what the read
      is compared against (see useSaveTeamOrder). */
   const save = useSaveTeamOrder({
-    // The refetch will carry exactly what was written, and the snapshot
-    // becomes that, so the save's own readback is not taken for another
-    // admin's change; a read that differs from it IS one, and is said so.
-    // A draft is kept (or made, for an unset or incomplete club that
-    // accepted the order shown without a move) for exactly that
-    // comparison, and is dropped again the moment the read agrees.
+    // `savedAs` is what the success note is derived against; the draft and
+    // its snapshot are `draftAfterSaved`, which says why a save keeps one.
     onSuccess: (vars) => {
-      const intended = intendedPositions(vars.orderedIds)
-      setSavedAs(intended)
-      setDraft({ ids: vars.orderedIds, expected: intended })
+      setSavedAs(intendedPositions(vars.orderedIds))
+      setDraft(draftAfterSaved(vars.orderedIds))
     },
-    /* Two branches, and the SNAPSHOT IS ALWAYS KEPT.
-
-       TeamOrderChanged is another admin's order landing under the draft.
-       The function refuses before writing, so nothing was stored, and the
-       draft is dropped: the refetched truth is what the list shows and the
-       refusal says so.
-
-       Every other failure keeps the arrangement that was SENT as the draft
-       (made into one if the club accepted the order shown without a move,
-       so a no-move save that fails never adopts an order nobody chose) AND
-       keeps `vars.expected`, the positions the draft was drawn from.
-
-       Clearing that snapshot was a defect, and the reasoning that produced
-       it was "nothing was written, so the next read can be adopted as it
-       comes". The missing half is that nothing was written BY US says
-       nothing about what anybody else wrote. With the snapshot cleared, a
-       read landing in that window is adopted wholesale, so another admin's
-       order becomes this screen's expected snapshot while the older draft
-       is still on screen, and the next press sends an expected that matches
-       what is stored: the function accepts, and their order is silently
-       overwritten. That is the same class of defect the fresh read branch
-       used to exist to prevent.
-
-       Keeping it is safe in every case, which is why there is no third
-       branch for the transport failure whose outcome this client cannot
-       know. If the call never landed and nothing else changed, the read
-       agrees with the snapshot and the arrangement survives for one more
-       press. If somebody else changed the order, the read disagrees and the
-       draft is dropped. If the call DID land, the read disagrees too, and
-       the draft is dropped: the wording is then a little generous to
-       another admin, but the outcome is a refreshed list rather than an
-       overwrite. A kept snapshot can only ever cause a refusal or a drop;
-       a cleared one can cause a silent overwrite.
-
-       There is no branch for a half written order, because the function
-       cannot leave one. */
+    /* Both outcomes are decided in teamOrder.ts, where they can be tested:
+       these callbacks are the only place the rule ran, and a static render
+       drives neither. `draftAfterFailure` states which failure drops the
+       draft and why every other one keeps the snapshot it was drawn from. */
     onError: (error, vars) => {
-      if (error instanceof TeamOrderChanged) setDraft(null)
-      else setDraft({ ids: vars.orderedIds, expected: vars.expected })
+      setDraft(draftAfterFailure(error, vars))
     },
   })
   const [name, setName] = useState('')
@@ -448,7 +411,7 @@ export function AdminTeams() {
      its own refetch is not mistaken for another admin's change; after any
      other failure null, meaning the next read is adopted as it comes,
      because some rows may have been written and the arrangement is kept. */
-  const [draft, setDraft] = useState<{ ids: string[]; expected: TeamPosition[] | null } | null>(null)
+  const [draft, setDraft] = useState<OrderDraft | null>(null)
   /* The order the last successful save wrote, and the success note is
      DERIVED from it: "Team order saved." shows only while the read holds
      exactly that order. A read carrying somebody else's order, a team added
