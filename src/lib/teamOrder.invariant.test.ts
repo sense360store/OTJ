@@ -226,6 +226,37 @@ describe('the teams read carries the column and keeps the display order', () => 
       expect(code, `${rel} holds a Supabase client`).not.toMatch(/supabase/)
       expect(code, `${rel} makes a write call`).not.toMatch(/\.(update|upsert|insert)\s*\(/)
     }
+    // A write can also carry the column WITHOUT NAMING IT, by reusing rows
+    // that already have it: `.upsert((data as TeamOrderResult).teams)` after
+    // the RPC adds no line naming `sort_order` and writes every position in
+    // the payload. Pinning the names cannot see that, so the OPERATIONS on
+    // the table are pinned too. Every `from('teams')` in every application
+    // source is followed by the call that says what it does, and that list
+    // is closed: a new write against the table is a new entry whatever it
+    // carries, and a second `update` is a new entry as well, because this is
+    // a list rather than a set.
+    const teamOps: string[] = []
+    for (const rel of applicationSources()) {
+      const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
+      for (const m of code.matchAll(/\bfrom\(\s*['"]teams['"]\s*\)/g)) {
+        const after = code.slice(m.index + m[0].length, m.index + m[0].length + 200)
+        const op = after.match(/\.\s*([A-Za-z_$][\w$]*)\s*\(/)
+        teamOps.push(`${rel}: ${op ? op[1] : '(no call)'}`)
+      }
+    }
+    expect(teamOps).toEqual([
+      // The teams read.
+      'src/lib/queries.ts: select',
+      // Add a team, rename a team, remove a team.
+      'src/lib/queries.ts: insert',
+      'src/lib/queries.ts: update',
+      'src/lib/queries.ts: delete',
+      // The team's default bib colour.
+      'src/lib/queries.ts: update',
+      // The invite checks the named teams belong to the caller's club.
+      'supabase/functions/invite-user/index.ts: select',
+    ])
+
     const named = withoutComments(read('lib/queries.ts'))
       .split('\n')
       .map((l) => l.trim())
