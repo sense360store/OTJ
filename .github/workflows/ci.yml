@@ -248,6 +248,19 @@ jobs:
         env:
           REQUIRE_POSTGRES: '1'
         run: bash .github/scripts/production-migration/test_0051_team_sort_order.sh
+      # 0052 adds the atomic team order RPC, and the ONE thing it exists for
+      # cannot be proved by any offline test or by the migration's own
+      # self-verification: whether TWO CONCURRENT CONNECTIONS can both commit
+      # a whole order and leave a merge neither submitted. That needs two
+      # backends contending on the same lock, so it runs here, against a real
+      # server, both ways round. The same script drives the overlapping race,
+      # every gate, the atomicity of a refusal, the audit trail, both probe
+      # states and nineteen mutations of the file, each pinned to the message
+      # of the one self-verification check that catches it.
+      - name: The atomic team order RPC serialises two real sessions, against a real PostgreSQL
+        env:
+          REQUIRE_POSTGRES: '1'
+        run: bash .github/scripts/production-migration/test_0052_atomic_team_order.sh
 
   # The Edge Function parser tests are hermetic Deno tests pinned against
   # real FA fixture pages; npm ci first because Deno resolves the npm

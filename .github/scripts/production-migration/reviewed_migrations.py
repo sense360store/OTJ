@@ -557,6 +557,165 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             ),
         },
     ),
+    # ------------------------------------------------------------------
+    # 0052_atomic_team_order: adds ONE function, public.set_team_order, and
+    # nothing else. No table, no column, no index, no policy, no grant on
+    # any table, no capability key, no trigger, and no value added to any
+    # vocabulary (audit_events.source and audit_events.action are both
+    # untouched). The only privilege it moves is EXECUTE on its own
+    # function: revoked from public and anon, granted to authenticated,
+    # with the function self gating on teams.manage in its body.
+    #
+    # WHAT IT IS FOR. COACH-1B (#225) writes the club's team order from the
+    # browser as separate PostgREST statements, each conditioned on the
+    # value the screen last read. Two admins who move DISJOINT rows never
+    # collide: one swaps positions 1 and 2 while the other swaps 3 and 4,
+    # every per row compare and set passes, both commit, and the club is
+    # left with a complete valid order NEITHER submitted.
+    # teams_sort_order_unique cannot object because the merge is a
+    # permutation like any other. The client can only detect that
+    # afterwards. This function makes the read that validates the order and
+    # the writes that store it one atomic, serialized transaction, so the
+    # merge is not reachable rather than merely reported.
+    #
+    # It serialises on THREE things. The first was found in review, after
+    # the other two were written and tested, and it is the one a reader is
+    # least likely to expect: the locks decide what a caller WAITS FOR and
+    # cannot decide WHEN IT LOOKED. A REPEATABLE READ or SERIALIZABLE
+    # transaction fixes its snapshot before it ever reaches a lock, so it
+    # waits its whole turn and then still reads the pre race world, matches
+    # an expected snapshot nobody holds any more, and writes the rows the
+    # winner did not touch, where PostgreSQL finds no conflict. That was
+    # reproduced against a real server, not theorised: without the guard a
+    # REPEATABLE READ caller is ACCEPTED and stores exactly the merge. So
+    # anything but READ COMMITTED is refused with P0001 before any lock.
+    # READ UNCOMMITTED is accepted because PostgreSQL runs it AS read
+    # committed, and the harness asserts that rather than trusting it: the
+    # first version of the guard assumed PostgreSQL rewrites the level at
+    # SET time, which it does not, and turned that caller away.
+    #
+    # It also refuses a caller that ALREADY HOLDS a write lock on teams.
+    # The deadlock freedom argument originally said ordinary team writes
+    # take neither lock and so cannot close a cycle, which is true of a
+    # transaction that only writes teams and false of one that writes teams
+    # and then calls this: it enters holding ROW EXCLUSIVE, blocks another
+    # caller at the table lock, and waits for that caller's advisory key.
+    # No ordering of the two locks fixes it, because the conflicting lock is
+    # held before the function is entered, so deadlock freedom is a property
+    # of that refusal. Every mode but ACCESS SHARE is refused: exempting
+    # ROW SHARE as well was the first version and was wrong, because it
+    # reasoned about relation level conflicts and forgot the ROW locks that
+    # come with SELECT ... FOR UPDATE, which a concurrent caller blocks on
+    # after taking both of this function's locks. Refusing ROW SHARE as a
+    # class also refuses the RowShareLock a foreign key check takes, whose
+    # KEY SHARE row locks could not have blocked a non key update; pg_locks
+    # cannot distinguish them, because a durable row lock lives in the
+    # tuple's xmax. Conservative in the safe direction. A plain SELECT holds
+    # ACCESS SHARE and no row lock, and is served.
+    #
+    # Then TWO locks, always in that order: a club scoped
+    # advisory transaction lock (the 'otj.<domain>:' || club idiom 0031,
+    # 0032, 0036 and 0049 already use) which orders whole order saves
+    # against each other, and SHARE ROW EXCLUSIVE on public.teams which
+    # stops a team being added or removed underneath the complete set
+    # validation. The second is table wide because PostgreSQL has no
+    # narrower lock that blocks an insert; teams is a handful of rows per
+    # club and the migration's header states that trade rather than hiding
+    # it. Under the locks it requires the request to name the club's
+    # CURRENT team set exactly, compares every stored position with the
+    # expected snapshot the admin's draft was drawn from, and refuses with
+    # P0001 carrying the DETAIL token 'stale_order' BEFORE writing if any
+    # differ. Not 40001, which it was first: nothing failed to serialize, a
+    # retry with the same snapshot can never succeed, and the security suite
+    # showed deterministically that a 40001 raised here never reaches a
+    # PostgREST client at all while every other refusal returns at once.
+    #
+    # It changes no data. Its own self-verification takes a BEFORE
+    # fingerprint of the teams, their positions whole, the audit rows,
+    # policies, grants, triggers and the teams_sort_order_unique definition
+    # into a transaction local table BEFORE the function is created and
+    # compares it AFTER, so "changed nothing" is a real comparison across
+    # the DDL. It also reads the STORED function definition back and
+    # asserts the boundaries the header claims.
+    #
+    # It deliberately does NOT call the function, and that is stated in the
+    # file rather than left as a gap. set_team_order gates on my_club() and
+    # has_perm(), both of which resolve through auth.uid(), and a migration
+    # apply has no JWT, so the function correctly refuses its own probe
+    # with 42501. An earlier draft carried such a probe and aborted the
+    # apply exactly there. Giving it an identity would mean writing to
+    # auth.users and forging request.jwt.claims from inside the one file
+    # whose whole claim is that it touches nothing else. 0049 is the
+    # precedent and reached the same conclusion for the same reason.
+    #
+    # AUDIT, stated honestly: the existing audit_teams() trigger (0037,
+    # replaced by 0044, allow list extended by 0051) is the only record and
+    # is untouched. The clear-then-place writes a moved, already placed
+    # team twice inside the one transaction, so such a team records TWO
+    # team.updated events; an unplaced team records one, an unmoved team
+    # records none, and none carries a value. Collapsing that would mean
+    # suppressing or deferring the trigger, which is a larger change to the
+    # audit boundary than the noise it would save.
+    #
+    # Its behaviour was exercised against a real PostgreSQL before
+    # shipping:
+    # .github/scripts/production-migration/test_0052_atomic_team_order.sh
+    # builds a stand-in of the substrate as 0051 leaves it and runs the
+    # disjoint race with TWO REAL CONNECTIONS, both ways round, plus the
+    # overlapping race, the per club independence of the advisory key,
+    # every gate, the atomicity of a refusal, the audit trail, and nineteen
+    # mutations of the file that must each abort the apply. Two sessions
+    # are the whole point: the migration's own DO block cannot contend with
+    # itself, so the serialization claim is only provable there. It runs in
+    # CI with REQUIRE_POSTGRES=1, and by hand when reviewing.
+    #
+    # Written against a hosted database whose newest ledger row is
+    # 20260902150212 / team_sort_order, the version the 0051 apply stamped
+    # on 2 September 2026, read from the live ledger on 3 September 2026.
+    # ------------------------------------------------------------------
+    "supabase/migrations/0052_atomic_team_order.sql": ReviewedMigration(
+        path="supabase/migrations/0052_atomic_team_order.sql",
+        ledger_name="atomic_team_order",
+        idempotency_key="otj:migration:0052_atomic_team_order",
+        expected_previous_version="20260902150212",
+        expected_previous_name="team_sort_order",
+        # Resolved through to_regprocedure, never a textual signature cast,
+        # for the reason 0049's review found: has_function_privilege raises
+        # 42883 for a name that does not resolve, so it cannot return false
+        # for an absent function and would break the PRE gate, which by
+        # definition runs where the function is absent. to_regprocedure
+        # returns null instead, and every privilege test below is made
+        # against the resolved oid.
+        objects={
+            "public.set_team_order(uuid[], integer[])": (
+                "(select to_regprocedure("
+                "'public.set_team_order(uuid[], integer[])'"
+                ") is not null)"
+            ),
+            # SECURITY DEFINER with an empty search_path is what makes the
+            # in body capability check the enforcement rather than a
+            # suggestion. chr(34) rather than a literal double quote: the
+            # verifier refuses a probe carrying a quote of any kind.
+            "it is SECURITY DEFINER with an empty search_path": (
+                "(select count(*) > 0 from pg_proc p "
+                "where p.oid = to_regprocedure("
+                "'public.set_team_order(uuid[], integer[])'"
+                ") "
+                "and p.prosecdef "
+                "and p.proconfig @> array[concat('search_path=', chr(34), chr(34))])"
+            ),
+            # anon is tested rather than assumed from PUBLIC, because a
+            # grant to PUBLIC would reach anon without ever naming it.
+            "authenticated executes it and anon does not": (
+                "(select count(*) > 0 from pg_proc p "
+                "where p.oid = to_regprocedure("
+                "'public.set_team_order(uuid[], integer[])'"
+                ") "
+                "and has_function_privilege('authenticated', p.oid, 'EXECUTE') "
+                "and not has_function_privilege('anon', p.oid, 'EXECUTE'))"
+            ),
+        },
+    ),
 }
 
 
