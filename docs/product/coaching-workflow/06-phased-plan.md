@@ -4,9 +4,11 @@ Status: proposal, reconciled 18 August 2026 against `main` at `afe790d`;
 delivery status re-verified 2 September 2026 against `main` at `3cb20f9`.
 **Five slices are built** (COACH-2A, COACH-2B, COACH-3, COACH-4 and COACH-10,
 each recorded under its own heading below with its pull request), **COACH-1 is
-built** (COACH-1A, migration `0051_team_sort_order`, merged as #223 and applied
-to production on 2 September 2026; COACH-1B, the Teams screen's ordering
-affordance, in its own PR), and everything else remains design. A settled design is not
+built** and took TWO gated migrations rather than the one this plan carried
+(COACH-1A, migration `0051_team_sort_order`, merged as #223 and applied on
+2 September 2026; `0052_atomic_team_order`, merged as #226 and applied on
+4 September 2026; COACH-1B, the Teams screen's ordering affordance, in its own
+PR), and everything else remains design. A settled design is not
 delivered work.
 
 The order was re-derived from scratch after coach discovery, then corrected once
@@ -36,7 +38,7 @@ turned out to be finished or unnecessary.
 | COACH-3, the suggested setup | **Merged.** #203 (the generator) and #204 (the screen). |
 | COACH-4, the setup preserved across attendance changes | **Merged.** #206. |
 | COACH-10, the shared authoring seam | **Merged.** #207. |
-| Migration numbering | `0050_bulk_delete_players.sql` is the highest on disk and was applied on 23 August 2026; the hosted head is `20260823065041` / `bulk_delete_players` (read 2 September 2026). The next free number is `0051`, and it stays unclaimed until a register entry pins it to that head. |
+| Migration numbering | `0052_atomic_team_order.sql` is the highest applied and stamped `20260904174142` / `atomic_team_order` on 4 September 2026, which is the hosted head; `0051_team_sort_order.sql` is the row before it at `20260902150212` / `team_sort_order`. Nothing is registered and unapplied. `0053` stays unclaimed until a register entry pins it to whatever head the ledger then holds, read live rather than inferred from the highest file on disk. |
 
 **The two pull requests that had to stay separate from this work have both
 merged**, on 27 August 2026, with nothing from this programme in either:
@@ -82,18 +84,62 @@ human review that is not auto-merged.
 ### COACH-1: the club's team order
 
 **Status.** Built. The database half, COACH-1A, is migration
-`0051_team_sort_order`, its own gated PR registered against the hosted head
-`20260823065041` / `bulk_delete_players`, merged as #223 and applied to
-production on 2 September 2026 through the reviewed workflow (hosted
-`20260902150212` / `team_sort_order`). The frontend half, COACH-1B, followed in
-its own PR: the Teams admin screen lists the teams in club order, moves them
-with Move up and Move down (no drag gesture), names the order as not set,
-incomplete or saved, and writes the positions 1..N through one Save team order
-checkpoint; `src/lib/teamOrder.ts` holds the rules and
-`src/lib/teamOrder.invariant.test.ts` pins that it is the one consumer. The
-grouping suggestion is still handed no order, by decision. R1 in
+`0051_team_sort_order`, merged as #223 and applied to production on 2 September
+2026 (hosted `20260902150212` / `team_sort_order`). R1 in
 `08-open-questions.md` is decided as its recommended default: `sort_order`
 joins the `audit_teams()` allow list.
+
+The reorder affordance, COACH-1B, took a SECOND gated migration this plan
+did not anticipate. A whole club order written from the
+browser is several PostgREST statements, each conditioned on the value the
+screen last read, and two admins who move DISJOINT rows never collide: from
+`A=1 B=2 C=3 D=4`, one swaps A and B while the other swaps C and D, every
+compare and set passes, both commit, and the club holds `B=1 A=2 D=3 C=4`,
+which neither submitted and the partial unique index cannot object to. The
+missing thing is a transaction, so `0052_atomic_team_order` adds one
+capability gated SECURITY DEFINER function, `set_team_order`, which validates
+the complete set and the admin's expected snapshot under a club advisory lock
+and SHARE ROW EXCLUSIVE on `teams`, refuses a stale save before writing, and
+otherwise clears and places the whole order in one transaction. It was
+registered against `20260902150212`, merged as #226 and applied to
+production on 4 September 2026 (hosted `20260904174142` /
+`atomic_team_order`). COACH-1B saves through ONE call to it: the Teams admin
+screen lists the teams in club order, moves them with Move up and Move down
+(no drag gesture), names the order as not set, incomplete or saved, and sends
+the whole arrangement in one request. `src/lib/teamOrder.ts` holds the pure
+ordering, draft and snapshot rules, `src/lib/queries.ts` owns the call and its
+error translation, and `src/lib/teamOrder.invariant.test.ts` pins that the
+Teams screen is the one consumer and that no client writes `sort_order`
+directly. The grouping suggestion is still handed no order, by decision.
+
+**What COACH-1B matches, because getting it wrong is silent.** A stale save
+raises `P0001` carrying the DETAIL token `stale_order`, which PostgREST returns
+as the error body's `details`. **Match the token, not the code**: `P0001` also
+covers every malformed request, so a client that keyed on the code alone would
+show "another admin saved a different order" for its own bugs and the reverse.
+This passage said `40001` while that was the contract, and it is worth saying
+why it is not, because `40001` is what an experienced reader would expect.
+Nothing in the database fails to serialize here: the transaction does what it
+is told and the application logic finds the caller's snapshot stale, so calling
+it `serialization_failure` tells every layer above that a retry may succeed
+when it never can. The security suite also showed, twice and deterministically,
+that a `40001` raised by this function never reaches a PostgREST client at all.
+Do not retry a `P0001` unchanged in either case.
+
+Two more preconditions the RPC enforces, both of which PostgREST satisfies by
+construction and a future server side caller might not: the calling transaction
+must be `READ COMMITTED` (a fixed snapshot waits for the locks and then still
+reads the pre race world, so it would commit exactly the merge), and it must
+not already hold any lock on `teams` stronger than ACCESS SHARE, which covers a
+prior write and a `SELECT ... FOR UPDATE` alike (either call order can deadlock,
+and no lock ordering inside the function can prevent it). Each is refused with
+`P0001`. A client that sends one request per transaction, as PostgREST does,
+meets both without trying.
+
+The lesson generalises twice over: any later slice that writes a SET of rows a
+unique index constrains cannot do it correctly from the client, and any slice
+that invents an error contract must check that this product's own client can
+receive it.
 
 **Outcome.** An admin states the club's ordering of its own teams, so every later
 suggestion has ability context without a per-player field.
@@ -791,12 +837,14 @@ ledger as it stands then.**
 ### The migration slices, in dependency order
 
 5. **COACH-1**, `teams.sort_order`. **Built**: COACH-1A, migration
-   `0051_team_sort_order`, merged as #223 and applied on 2 September 2026, and
-   COACH-1B, the ordering affordance, in its own PR. One nullable column on a five-row
-   table, and the smallest possible first migration for this programme. Whether
-   it upgrades COACH-3 from "keeps teams whole" to "combines adjacent bands" is
-   a later decision: nothing consumes the order yet, and the register still
-   hands the grouping suggestion no order.
+   `0051_team_sort_order`, merged as #223 and applied on 2 September 2026;
+   `0052_atomic_team_order`, the transactional writer the client save could not
+   be, merged as #226 and applied on 4 September 2026; and COACH-1B, the
+   ordering affordance, in its own PR. One nullable column on a five-row table
+   plus one function, and still the smallest first migration for this
+   programme. Whether it upgrades COACH-3 from "keeps teams whole" to "combines
+   adjacent bands" is a later decision: nothing consumes the order yet, and the
+   register still hands the grouping suggestion no order.
 6. **COACH-5**, the `venue_layouts` table. The largest single review in the
    programme: a new table, a new shape boundary, RLS mirroring `venues`, and the
    season and age group resolution.

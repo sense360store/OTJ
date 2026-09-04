@@ -13,7 +13,7 @@ reviewed values. A breach stops the deploy outright:
   - every drill is internal_only;
   - every media row is internal_only;
   - the migration ledger's newest version is exactly EXPECTED_LAST_MIGRATION,
-    currently 20260902150212 (0051, team_sort_order);
+    currently 20260904174142 (0052, atomic_team_order);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
 LIVE SHARING STATE, which is legitimate mutable product data and is therefore
@@ -115,18 +115,18 @@ import urllib.parse
 # which would let an unreviewed migration land unnoticed.
 #
 # It moves in lockstep with the migration actually applied to hosted. The value
-# below is RECONCILED: 0051_team_sort_order was deliberately applied to the
+# below is RECONCILED: 0052_atomic_team_order was deliberately applied to the
 # hosted project through the gated production process (workflow run
-# 33645893501, from the reviewed commit
-# 855b0dc9fb0adfd7fa8e47cffe930638c2bf5759 on the COACH-1A branch, pull
-# request #223, three minutes before that branch merged), and hosted assigned
-# it this exact version, 20260902150212. It was read back from
+# 33901817120, from the reviewed commit
+# 973de7d692569c1db495d18e9ecb6001dc7160d0 on the COACH-1B database branch,
+# pull request #226, at 17:41 UTC on 4 September 2026, nine minutes before
+# that branch merged), and hosted assigned it this exact version,
+# 20260904174142. It was read back from
 # supabase_migrations.schema_migrations after the apply and confirmed to be
 # the unique newest ledger entry, appearing exactly once with no row newer,
-# and with the previously pinned 20260823065041 / bulk_delete_players now the
-# entry before it. The migration adds one nullable column, one partial unique
-# index and one audit allow list entry, and writes no row: every team's
-# position was null before the apply and is null after it.
+# and with the previously pinned 20260902150212 / team_sort_order now the
+# entry before it. The migration adds one function and writes no row: every
+# team's position was null before the apply and is null after it.
 #
 # The row carries the evidence the gated workflow
 # (.github/workflows/apply-production-migration.yml) records. Each fact below
@@ -136,67 +136,67 @@ import urllib.parse
 #   ASSERTED BY THE POST-APPLY GATE (verify_hosted_state.assert_post), and
 #   read back again here:
 #     - the row is the unique newest one, recorded at the newest version, in
-#       a ledger of 46 rows with exactly one row named team_sort_order;
-#     - the VERSION of the row before it is 20260823065041. Only the version:
+#       a ledger of 47 rows with exactly one row named atomic_team_order;
+#     - the VERSION of the row before it is 20260902150212. Only the version:
 #       assert_post compares second_version against expected_previous_version
 #       and never compares second_name, which it reads but uses only in the
 #       failure message and the report table. The NAME below is readback;
 #     - statements holds exactly one entry, and md5(statements[1]) is
-#       a69fb87b31007eabd009bcab27aacecd, the reviewed file with its trailing
-#       newline stripped;
+#       8a3d8a6778e343bacd3ebacb149d5e5a, the reviewed file with its trailing
+#       newline stripped (56271 bytes). That is the strongest single fact
+#       here: what production ran is the reviewed file byte for byte, not a
+#       file that merely passed the same probes;
 #     - and, through the three registered object probes in
-#       reviewed_migrations.py: that public.teams.sort_order is an integer
-#       column, nullable, with no default (information_schema.columns); that
-#       teams_sort_order_unique is a unique, non primary, PARTIAL index on
-#       teams with exactly two key columns (pg_index, the table resolved
-#       through to_regclass); and that the stored body of
-#       public.audit_teams() carries the comparison "new.sort_order is
-#       distinct from old.sort_order" (to_regprocedure, then
-#       pg_get_functiondef). The third flips on the BODY of a function that
-#       already existed, since audit_teams() has been there since 0037.
+#       reviewed_migrations.py: that public.set_team_order(uuid[], integer[])
+#       resolves (to_regprocedure, never a textual signature cast, for the
+#       reason 0049's review found); that it is SECURITY DEFINER with an
+#       empty search_path (pg_proc.prosecdef and proconfig, the expected
+#       value composed with chr(34) because the verifier refuses a probe
+#       carrying a quote); and that authenticated holds EXECUTE on it while
+#       anon does not, with anon tested rather than inferred from PUBLIC.
 #
 #   READ BACK HERE ONLY, and NOT asserted by that gate:
 #     - created_by is
-#       github-actions:apply-production-migration@855b0dc9fb0adfd7fa8e47cffe930638c2bf5759,
+#       github-actions:apply-production-migration@973de7d692569c1db495d18e9ecb6001dc7160d0,
 #       naming the workflow and the commit it ran from. The gate never selects
 #       this column at all;
-#     - idempotency_key is otj:migration:0051_team_sort_order against a
+#     - idempotency_key is otj:migration:0052_atomic_team_order against a
 #       UNIQUE column, so the same migration cannot be applied twice. The gate
 #       checks that key only BEFORE the apply, to prove the migration had not
-#       already run; assert_post does not re-read it;
-#     - the NAME of the preceding row is bulk_delete_players. A row that
-#       kept version 20260823065041 under a different name would satisfy the
-#       gate, so this half of that row's identity rests on the readback.
+#       already run; assert_post does not re-read it. That key is what
+#       refuses a second apply through the workflow, and it carries more
+#       weight here than it did for 0051: create or replace function is
+#       idempotent where add column is not, so the migration's own
+#       self-verification would NOT refuse a second raw apply;
+#     - PUBLIC does not hold EXECUTE either. The probe tests anon, which is
+#       the role a browser reaches PostgREST as when signed out; PUBLIC is
+#       the grant that would have made that moot, and only the readback
+#       excludes it.
 #
-# Those probes are why the objects' existence and their shape belong above
-# and not here: they are asserted by the gate on every run, not merely read
-# back once. What the readback adds, and the ONLY thing it adds, is what the
-# probes pin by shape rather than by text: the index's full definition,
-# CREATE UNIQUE INDEX teams_sort_order_unique ON public.teams USING btree
-# (club_id, sort_order) WHERE (sort_order IS NOT NULL), which fixes the key
-# column ORDER and the predicate that a two column, partial probe cannot;
-# that audit_teams() is still SECURITY DEFINER with an empty search_path and
-# that teams still carries exactly its two policies with row level security
-# enabled, none of which a probe checks; and that the hosted teams table
-# holds five rows and none carries a position, which is what "no backfill"
-# means on the live rows.
+# Those probes are why the function's existence and its security posture
+# belong above and not here: they are asserted by the gate on every run, not
+# merely read back once. What the readback adds, and the ONLY thing it adds,
+# beyond PUBLIC above, is the state 0052 promised to leave UNTOUCHED, which
+# no probe of a newly created function can speak to: public.teams still holds
+# five rows and none carries a position, which is what "writes no row" means
+# on the live rows; teams still carries exactly its two policies and exactly
+# its one non internal trigger, the audit writer; and
+# teams_sort_order_unique is still CREATE UNIQUE INDEX
+# teams_sort_order_unique ON public.teams USING btree (club_id, sort_order)
+# WHERE (sort_order IS NOT NULL), the definition 0051's apply left, so the
+# last guard the function's clear-then-place is written around is the same
+# guard.
 #
-# No probe reads pg_get_indexdef, so an index on (sort_order, club_id) under
-# the same predicate would satisfy the index probe. That gap is the reason
-# the definition is recorded here at all; the migration's own self
-# verification compared the whole definition string at apply time, and the
-# readback confirms what it left.
-#
-# What NONE of that establishes is the other half of "0051 adds one column,
-# one index and one allow list entry and NOTHING else". The probes look at
-# those three objects, and the readback at the same three and the rows;
-# neither inventories every table, column, index, policy or trigger, so
-# nothing in either could tell a 0051 that added only those from one that
-# added them and something more. That property rests on REVIEW OF THE
-# MIGRATION SQL and on the file's own before and after fingerprints of the
-# teams policies, grants, triggers and the capability set, which is what the
-# gated production process exists to provide, and this block claims no more
-# than that.
+# What NONE of that establishes is the other half of "0052 adds one function
+# and NOTHING else". The probes look at that one function, and the readback
+# at it and at the four things above; neither inventories every table,
+# column, index, policy or trigger, so nothing in either could tell a 0052
+# that added only the function from one that added it and something more.
+# That property rests on REVIEW OF THE MIGRATION SQL and on the file's own
+# before and after fingerprints of the team rows, their positions whole, the
+# audit rows, the policies, the grants, the triggers and the index
+# definition, which is what the gated production process exists to provide,
+# and this block claims no more than that.
 #
 # This constant's move is a RECONCILIATION of an already applied, already
 # reviewed migration. Changing it deploys nothing, applies nothing and alters
@@ -207,7 +207,7 @@ import urllib.parse
 # so it cannot be known before the apply happens. The order is always: apply ->
 # read back the recorded version -> set this constant to exactly that value in
 # a reviewed pull request -> only then deploy.
-EXPECTED_LAST_MIGRATION = "20260902150212"  # 0051_team_sort_order
+EXPECTED_LAST_MIGRATION = "20260904174142"  # 0052_atomic_team_order
 
 # The EXACT set of club ids permitted to have public_sharing_enabled true.
 # This is a deployment review pin in the same sense as
