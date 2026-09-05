@@ -56,7 +56,7 @@ Query string, all optional:
 | `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin`, `planner`, `clubadmin` |
 | `theme` | `light` (default), `dark` |
 | `auth` | `signedin` (default), `signedout` (the default for `screen=login`), `needspassword`, `authloading` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning`, `adminloading`, `adminerror`, `noteams`, `gridloading`, `gridunavailable`, `lastadmin`, `statesunknown` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning`, `adminloading`, `adminerror`, `noteams`, `gridloading`, `gridunavailable`, `lastadmin`, `statesunknown`, `orderunset`, `orderincomplete` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
@@ -387,6 +387,8 @@ its own state either way; `lastadmin` puts the club's only Admin on somebody
 else's row, which is the only arrangement in which the last admin lock is
 reachable on a row the signed in member can act on; and `statesunknown` leaves
 the member states read unsettled, so no member claims invited or active.
+
+`orderunset` and `orderincomplete` are the Teams screen's two other club order states (COACH-1B): a club that has never placed a team, whose list is alphabetical and said to be so, and a club that has placed two of five. The default club is configured, so no other screen's shot moves; the order entries in `admin.mjs` drive Move up, Save team order and Add team against all three.
 
 Everything else is the SHARED write phases: `inflight`, `writefails`,
 `writeslow` and `writeslowfails` mean here exactly what they mean everywhere

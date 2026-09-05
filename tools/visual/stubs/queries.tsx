@@ -114,9 +114,12 @@ export const useProgrammes = () => query([])
 const useAdminTeams = (): Team[] => useSyncExternalStore(adminStore.subscribe, adminStore.teams, adminStore.teams)
 export const useTeams = () => {
   const teams = useAdminTeams()
+  // The product's dataUpdatedAt: moves when a read LANDS, rows changed or
+  // not, which is what the Teams screen keys its draft handling on.
+  const dataUpdatedAt = useSyncExternalStore(adminStore.subscribe, adminStore.readVersion, adminStore.readVersion)
   if (state === 'adminloading') return pendingQuery<Team[]>()
   if (state === 'adminerror') return failedQuery<Team[]>()
-  return query(teams)
+  return query(teams, { dataUpdatedAt })
 }
 export const useTeamMap = () => byId(useAdminTeams())
 export const useMyTeams = () => query({ teamIds: TEAMS.map((t) => t.id), allTeams: true })
@@ -689,6 +692,7 @@ interface AdminCallLog {
   renameTeam: number
   deleteTeam: number
   setTeamBib: number
+  saveTeamOrder: number
   /* Every write MADE, in order, WITH ITS ARGUMENTS. A counter says a write
      happened and the order says when, and neither says what was sent: the
      member save could send `teamIds: []` while the row still read All teams,
@@ -712,6 +716,7 @@ const adminCalls: AdminCallLog = {
   renameTeam: 0,
   deleteTeam: 0,
   setTeamBib: 0,
+  saveTeamOrder: 0,
   writes: [],
 }
 ;(globalThis as unknown as { __adminCalls?: AdminCallLog }).__adminCalls = adminCalls
@@ -745,6 +750,17 @@ const nameLookup = <T,>(rows: () => T[], idOf: (r: T) => string, nameOf: (r: T) 
     for (const n of known.values()) if (n === name) carriers += 1
     return carriers === 1 ? name : ''
   }
+}
+/* COACH-1B. Another admin's save, for a driver to land under an open draft:
+   the fixture store is the one the screen reads through, so a call here is
+   indistinguishable from a refetch carrying an order somebody else stored.
+   It is a driver hook, not a write of this screen, and the call log does
+   not record it. */
+;(globalThis as unknown as { __adminStore?: { saveTeamOrder: (orderedIds: string[]) => void } }).__adminStore = {
+  saveTeamOrder: (orderedIds) => {
+    adminStore.saveTeamOrder(orderedIds)
+    adminStore.readLanded()
+  },
 }
 ;(
   globalThis as unknown as {
@@ -818,6 +834,9 @@ function useAdminWrite<V, R = void>(
         const err = new Error(message)
         opts.onError?.(err)
         reject?.(err)
+        // The invalidated read still comes back after a refusal, a tick
+        // later, carrying whatever the refused write left.
+        setTimeout(() => adminStore.readLanded(), 0)
       } else {
         /* THE CALLBACK FIRST, AND THE LIST A TICK LATER, because that is the
            ORDER PRODUCTION HAS and the whole reason three screens wait for a
@@ -830,7 +849,10 @@ function useAdminWrite<V, R = void>(
            hook keyed on the write from one keyed on the row: reducing
            `rowGone` to `removed !== null` passed every entry. */
         opts.onSuccess?.(result ? result(vars) : (undefined as R))
-        setTimeout(() => apply?.(vars), 0)
+        setTimeout(() => {
+          apply?.(vars)
+          adminStore.readLanded()
+        }, 0)
       }
       setPending(false)
     }, ADMIN_DELAY)
@@ -973,3 +995,34 @@ export const useSetTeamBibColour = () =>
   useAdminWrite<{ teamId: string; bibColour: string | null }>('setTeamBib', 'Could not change the bib colour.', (vars) =>
     adminStore.setTeamBib(vars.teamId, vars.bibColour),
   )
+
+/* COACH-1B. The one write of the club's team order; the payload is the
+   whole intended order, which is what the frozen rules are about, so the
+   call log carries it. */
+type SaveTeamOrderVars = { orderedIds: string[]; expected: { id: string; sortOrder: number | null }[] }
+/* The product hook takes the screen's outcome handling as ITS OWN callbacks,
+   which run before its invalidation refetch is awaited, so the stub calls
+   them in the same place: on settle, before the store applies the write and
+   lands the read a tick later. */
+export const useSaveTeamOrder = (callbacks?: {
+  onSuccess?: (vars: SaveTeamOrderVars) => void
+  onError?: (error: Error, vars: SaveTeamOrderVars) => void
+}) => {
+  const write = useAdminWrite<SaveTeamOrderVars>('saveTeamOrder', 'Could not save the team order.', (vars) =>
+    adminStore.saveTeamOrder(vars.orderedIds),
+  )
+  return {
+    ...write,
+    mutate: (vars: SaveTeamOrderVars, opts: { onSuccess?: () => void; onError?: (e: Error) => void } = {}) =>
+      write.mutate(vars, {
+        onSuccess: () => {
+          callbacks?.onSuccess?.(vars)
+          opts.onSuccess?.()
+        },
+        onError: (e) => {
+          callbacks?.onError?.(e, vars)
+          opts.onError?.(e)
+        },
+      }),
+  }
+}

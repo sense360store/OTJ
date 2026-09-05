@@ -295,7 +295,7 @@ describe('16. no historical session is deleted, or altered, by any of this', () 
       { id: 'p1', teamId: 'titans', displayName: 'Alpha Synthetic', shirtNumber: null, createdBy: null },
       { id: 'p2', teamId: 'titans', displayName: 'Bravo Synthetic', shirtNumber: null, createdBy: null },
     ]
-    const teams: Team[] = [{ id: 'titans', name: 'Titans', bibColour: 'red' }]
+    const teams: Team[] = [{ id: 'titans', name: 'Titans', bibColour: 'red', sortOrder: null }]
     const entries: RegisterEntry[] = [
       // Both facts recorded on a night that has happened: they were here,
       // and the coach had them in a group. Neither may be disturbed by the

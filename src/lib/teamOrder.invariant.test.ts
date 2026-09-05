@@ -1,31 +1,54 @@
-// COACH-1A ships the club's team order as a COLUMN (migration
-// 0051_team_sort_order: teams.sort_order, nullable, with a partial unique
-// index per club) and deliberately NO consumer. COACH-1B, a separate
-// frontend pull request, reads and writes it. Until then these pin what
-// "no consumer" means, because the column exists in the database from the
-// day the migration is applied and a well-meaning read of it is the
-// easiest thing to add by accident:
+// The club's team order has ONE reviewed consumer, and this pins its edge.
 //
-//   * the teams read selects an explicit column list that does not name
-//     it, so the deployed client never sees the column and every write it
-//     sends omits it;
-//   * no application source reads or writes it, by either spelling, other
-//     than a comment naming what a later slice will do;
-//   * the grouping suggestion still takes the order as a parameter and
-//     names no column a write would target (pinned beside it in
-//     sessionSetup.invariant.test.ts, and restated here by reference);
-//   * the label every session surface shows stays alphabetical, which is
-//     the one order the product has today and is not what the column will
-//     mean. Two orders will coexist and must not be confused.
+// COACH-1A shipped the column (migration 0051_team_sort_order: teams
+// sort_order, nullable, with a partial unique index per club) with no
+// consumer at all, and the first version of this file pinned exactly that.
+// COACH-1B is the reviewed consumer: the teams read carries the column, the
+// Team model carries it as sortOrder, src/lib/teamOrder.ts holds every rule
+// about it, the Teams admin screen renders and saves it through the one
+// mutation in queries.ts, and NOTHING ELSE reads it. In particular the
+// grouping suggestion still takes the order as a parameter and the register
+// screen still hands it null; wiring the two together is a later slice's
+// decision, made in the open rather than by a column quietly arriving in a
+// select list. These pin that boundary, because the column exists in every
+// row now and a well meaning read of it is the easiest thing to add.
 //
-// Source text tripwires, not proofs: they catch the realistic mistake
-// (a column typed into a select list, a field read off a row) and say
-// nothing about a value that reaches a consumer through a variable. The
+//   * the teams read selects an explicit column list that names it, and
+//     still orders by NAME, because the read order is the product's
+//     display order and the club order is a separate answer;
+//   * the Team model carries sortOrder, so a consumer reads a typed field
+//     rather than a raw row, and no player level field of any such name
+//     exists anywhere;
+//   * the only application sources that name the column or the field, by
+//     either spelling, are the reviewed COACH-1B path;
+//   * the grouping suggestion names no column a write would target and the
+//     register passes it no order (both restated here by reference and
+//     pinned beside them in sessionSetup.invariant.test.ts);
+//   * the label every session surface shows stays alphabetical, whatever
+//     order the Team objects carry;
+//   * no Edge Function reads or forwards it.
+//
+// Source text tripwires, not proofs: they catch the realistic mistake (a
+// field read off a Team in a screen, a column typed into a select list) and
+// say nothing about a value that reaches a consumer through a variable. The
 // blind spots, named so a pass is read for what it is: a column name
-// assembled from parts ('sort_' + 'order'), a select('*') on teams that
-// would carry the column without naming it, a row spread into another
-// shape, and a mention after a URL on the same line, which the comment
-// stripping below leaves on the scanned side only up to the colon.
+// assembled from parts ('sort_' + 'order'), a select('*') on teams that would
+// carry the column without naming it, a Team spread into another shape and
+// read there under another name, and a mention after a URL on the same line,
+// which the comment stripping below leaves on the scanned side only up to
+// the colon.
+//
+// What these DO NOT do any more is parse a write payload. An earlier version
+// sliced each write call to its balanced closing bracket and looked inside,
+// and it failed OPEN five separate times on delimiters its hand rolled
+// tokenizer did not know (a bracket inside a string, a regex body, a quoted
+// computed key, a postfix `++` before a division, a parenthesized computed
+// key). Each fix taught it one more thing about JavaScript and acquired its
+// own edge. The property is now enforced where it needs no parsing: outside
+// the three reviewed consumers the column may not be NAMED at all, two of
+// those three hold no client and make no write call, and in the third every
+// line naming the column is pinned. A write in any syntax is a line that is
+// not on the list, so the syntax stopped mattering.
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -39,6 +62,21 @@ const SRC = join(process.cwd(), 'src')
 // not see, and the public share deny lists are exactly where a new column
 // tends to arrive by accident.
 const FUNCTIONS = join(process.cwd(), 'supabase', 'functions')
+
+/* The reviewed COACH-1B boundary: the only application sources that may
+   name the column or the field. Widening this list is a product decision
+   (a consumer of the order), made in a reviewed change that also says what
+   the consumer does with it. */
+const REVIEWED_CONSUMERS = [
+  'src/lib/data.ts', // the Team model carries sortOrder
+  'src/lib/queries.ts', // the read carries sort_order; the save is the one rpc call and writes nothing
+  'src/lib/teamOrder.ts', // every rule about the order
+]
+/* The one screen. It never names the column or the field itself: it reads
+   the order through teamOrder.ts and saves it through the one mutation, so
+   a screen that started reading `team.sortOrder` directly would show up in
+   the sweep below like any other consumer. */
+const REVIEWED_SCREEN = 'src/routes/AdminTeams.tsx'
 
 function read(rel: string): string {
   return readFileSync(join(SRC, rel), 'utf8')
@@ -57,6 +95,50 @@ function withoutComments(source: string): string {
     .replace(/(^|[^:])\/\/.*$/gm, '$1')
 }
 
+/* Slice between two anchors, and FAIL when either is absent.
+
+   This exists because the obvious version was wrong in a way that kept
+   passing: the slices below run over `withoutComments(...)`, and they used to
+   end at `'// ---- Spond RSVP context'`, a COMMENT, which stripping has
+   already removed. `indexOf` returned -1, `slice(start, -1)` ran to the end of
+   the file, and every positive assertion still matched something somewhere in
+   queries.ts. A negative assertion is what exposed it. Anchors must therefore
+   be executable syntax, and a missing one must be an error rather than a
+   wider slice. */
+function between(src: string, from: string, to: string): string {
+  const start = src.indexOf(from)
+  expect(start, `anchor not found: ${from}`).toBeGreaterThan(-1)
+  const end = src.indexOf(to, start + from.length)
+  expect(end, `anchor not found: ${to}`).toBeGreaterThan(-1)
+  return src.slice(start, end)
+}
+
+/* String, template and regex literal contents blanked, so a bracket inside
+   one cannot be counted as structure.
+
+   Review found this the hard way: without it the balancing scanner below
+   FAILS OPEN rather than merely taking a longer slice.
+   `.update({ label: "))", sort_order: 1 })` drives the depth to zero inside
+   the string, the captured arguments end before the key, and the write is
+   invisible to the very test that exists to forbid it. Failing open is the
+   one direction a tripwire may never fail.
+
+   Contents are blanked rather than removed so nothing outside a literal
+   shifts. A template's `${...}` is blanked with the rest of it: an
+   interpolation is not where a write payload's keys live, and treating the
+   whole literal as opaque is the conservative choice. */
+
+/* The column named ANYWHERE in a write payload, in either spelling.
+
+   Deliberately not "the key followed by a colon", which review found misses
+   the two ordinary ways of writing the same property: the shorthand
+   `{ sort_order }` and the quoted `{ 'sort_order': 1 }`. There is no
+   legitimate reason for this column to appear in a write payload at all, so
+   the bare identifier is the right test and the strictest one. String
+   contents are already blanked, so a payload merely mentioning the name in
+   text does not fire. */
+const NAMES_SORT_ORDER = /\bsort_?[Oo]rder\b/
+
 function applicationSources(): string[] {
   const out: string[] = []
   for (const root of [SRC, FUNCTIONS]) {
@@ -70,36 +152,388 @@ function applicationSources(): string[] {
   return out.sort()
 }
 
-describe('the team order column has no consumer yet', () => {
-  it('the teams read selects an explicit column list that does not name sort_order', () => {
+function mentions(rel: string): string[] {
+  const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
+  const found: string[] = []
+  code.split('\n').forEach((line, i) => {
+    if (/sort_order|sortOrder/.test(line)) found.push(`${rel}:${i + 1}: ${line.trim()}`)
+  })
+  return found
+}
+
+describe('the teams read carries the column and keeps the display order', () => {
+  it('selects an explicit column list that names sort_order, never select(*)', () => {
     const src = read('lib/queries.ts')
     const match = /const TEAM_COLS = '([^']+)'/.exec(src)
     expect(match, 'TEAM_COLS must be a literal column list').not.toBeNull()
-    // Exact, so widening it is a deliberate change in the slice that owns
-    // the consumer rather than a drift this test lets through.
-    expect(match![1]).toBe('id, club_id, name, bib_colour, created_at')
-    expect(match![1]).not.toContain('sort_order')
+    // Exact, so widening it again is a deliberate change rather than drift.
+    expect(match![1]).toBe('id, club_id, name, bib_colour, created_at, sort_order')
+    expect(withoutComments(src)).not.toMatch(/from\('teams'\)\s*\.select\('\*'\)/)
   })
 
-  it('the client Team shape carries no order', () => {
-    const src = read('lib/data.ts')
-    const shape = /export interface Team \{([^}]*)\}/.exec(src)
+  it('still orders the read by name, so the club order never becomes the display order by accident', () => {
+    const src = withoutComments(read('lib/queries.ts'))
+    const readSite = src.match(/from\('teams'\)\.select\(TEAM_COLS\)\.order\('([^']+)'/)
+    expect(readSite, 'the teams read orders by a column').not.toBeNull()
+    expect(readSite![1]).toBe('name')
+  })
+
+  it('maps sort_order to sortOrder on the Team model, null for null', () => {
+    const src = withoutComments(read('lib/queries.ts'))
+    expect(src).toMatch(/sortOrder: r\.sort_order \?\? null/)
+    const shape = /export interface Team \{([^}]*)\}/.exec(read('lib/data.ts'))
     expect(shape).not.toBeNull()
-    expect(shape![1]).not.toMatch(/sortOrder|sort_order/)
+    expect(shape![1]).toMatch(/sortOrder: number \| null/)
   })
 
-  it('no application source, browser or Edge, reads or writes sort_order or sortOrder outside a comment', () => {
+  it('NO client code writes sort_order, and it is unwritable by construction rather than by scanning', () => {
+    // The whole point of 0052. A whole order written from the browser cannot
+    // be a transaction, so two admins moving disjoint rows leave an order
+    // neither submitted. A direct write reintroduced anywhere, as a fallback
+    // or a retry or for a single row, reopens exactly that race, and it would
+    // do so silently: every individual write still succeeds.
+    //
+    // THIS USED TO READ THE WRITE PAYLOADS, and that was the wrong
+    // instrument. It sliced each `.update`/`.upsert`/`.insert` call to its
+    // balanced closing bracket and looked for the column inside. Every
+    // version of that slicer failed OPEN on a delimiter it did not know:
+    // a bracket inside a string, then a regex body, then a computed quoted
+    // key, then a postfix `++` before a division, then a parenthesized
+    // computed key. Five evasions in three review rounds, each fixed by
+    // teaching a hand rolled tokenizer one more thing about JavaScript, and
+    // each fix acquiring its own edge. A tripwire whose matcher is wrong is
+    // worse than no tripwire, because it reads as coverage, and no amount of
+    // hardening makes "parse the payload" fail closed.
+    //
+    // So the payload is no longer read at all. The property is enforced
+    // where it needs no parsing:
+    //
+    //   * outside the three reviewed consumers, ANY mention of the column is
+    //     a finding already (the sweep below), so a write cannot be
+    //     introduced anywhere else in any syntax;
+    //   * two of those three cannot write anything: they hold no Supabase
+    //     client and make no write call;
+    //   * which leaves queries.ts as the only file where a write call and
+    //     the column name can coexist, and EVERY line there naming the
+    //     column is pinned. A write in any syntax, computed, quoted,
+    //     interpolated or hidden behind a regex, is a line that is not on
+    //     this list.
+    //
+    // Fails closed: the way to add one is to add it here, in a change
+    // somebody reviews, which is the gate this file exists to be.
+    for (const rel of ['src/lib/data.ts', 'src/lib/teamOrder.ts']) {
+      const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
+      expect(code, `${rel} holds a Supabase client`).not.toMatch(/supabase/)
+      expect(code, `${rel} makes a write call`).not.toMatch(/\.(update|upsert|insert)\s*\(/)
+    }
+    // A write can also carry the column WITHOUT NAMING IT, by reusing rows
+    // that already have it: `.upsert((data as TeamOrderResult).teams)` after
+    // the RPC adds no line naming `sort_order` and writes every position in
+    // the payload. Pinning the names cannot see that, so the OPERATIONS on
+    // the table are pinned too. Every `from('teams')` in every application
+    // source is followed by the call that says what it does, and that list
+    // is closed: a new write against the table is a new entry whatever it
+    // carries, and a second `update` is a new entry as well, because this is
+    // a list rather than a set.
+    const teamOps: string[] = []
+    for (const rel of applicationSources()) {
+      const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
+      for (const m of code.matchAll(/\bfrom\(\s*['"]teams['"]\s*\)/g)) {
+        const after = code.slice(m.index + m[0].length, m.index + m[0].length + 200)
+        const op = after.match(/\.\s*([A-Za-z_$][\w$]*)\s*\(/)
+        teamOps.push(`${rel}: ${op ? op[1] : '(no call)'}`)
+      }
+    }
+    expect(teamOps).toEqual([
+      // The teams read.
+      'src/lib/queries.ts: select',
+      // Add a team, rename a team, remove a team.
+      'src/lib/queries.ts: insert',
+      'src/lib/queries.ts: update',
+      'src/lib/queries.ts: delete',
+      // The team's default bib colour.
+      'src/lib/queries.ts: update',
+      // The invite checks the named teams belong to the caller's club.
+      'supabase/functions/invite-user/index.ts: select',
+    ])
+
+    const named = withoutComments(read('lib/queries.ts'))
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => NAMES_SORT_ORDER.test(l))
+    expect(named).toEqual([
+      // The row shape the teams read returns.
+      'sort_order: number | null',
+      // The read's explicit column list. A read, and the only place the
+      // column is named in a PostgREST call at all.
+      "const TEAM_COLS = 'id, club_id, name, bib_colour, created_at, sort_order'",
+      // Row to model, on the way in.
+      'return { id: r.id, name: r.name, bibColour: r.bib_colour ?? null, sortOrder: r.sort_order ?? null }',
+      // The rows set_team_order returns, and their mapper. Also reads: the
+      // function returns what it stored and this client only displays it.
+      'type TeamPositionRow = { id: string; sort_order: number | null }',
+      'const toTeamPosition = (r: TeamPositionRow): TeamPosition => ({ id: r.id, sortOrder: r.sort_order ?? null })',
+    ])
+  })
+
+  it('that pinning catches every write shape, including the five that evaded the payload scanner', () => {
+    // Driven over the shapes a reintroduction would take, as text added to
+    // the module. Each is a line naming the column that is not on the list,
+    // so the syntax it uses is irrelevant, which is the property the scanner
+    // could never have.
+    const pinned = [
+      'sort_order: number | null',
+      "const TEAM_COLS = 'id, club_id, name, bib_colour, created_at, sort_order'",
+      'return { id: r.id, name: r.name, bibColour: r.bib_colour ?? null, sortOrder: r.sort_order ?? null }',
+      'type TeamPositionRow = { id: string; sort_order: number | null }',
+      'const toTeamPosition = (r: TeamPositionRow): TeamPosition => ({ id: r.id, sortOrder: r.sort_order ?? null })',
+    ]
+    const caught = (line: string) => NAMES_SORT_ORDER.test(line) && !pinned.includes(line.trim())
+
+    expect(caught("supabase.from('teams').update({ sort_order: 1 }).eq('id', id)")).toBe(true)
+    expect(caught("supabase.from('teams').insert([{ sort_order: 1 }])")).toBe(true)
+    expect(caught("supabase.from('teams').upsert([{ sortOrder: 1 }])")).toBe(true)
+    expect(caught("supabase.from('teams').update({ ...rest, sort_order: n })")).toBe(true)
+    expect(caught("supabase.from('teams').update(rows.map((r) => ({ sort_order: r.n })))")).toBe(true)
+    expect(caught("supabase.from('teams').update({ sort_order })")).toBe(true)
+    // The five that walked past the payload scanner, in the order they were
+    // found. Each is now caught for a reason that has nothing to do with
+    // parsing: it is a new line naming the column.
+    expect(caught('supabase.from("teams").update({ label: "))", sort_order: 1 })')).toBe(true)
+    expect(caught("supabase.from('teams').update({ 'sort_order': 1 })")).toBe(true)
+    expect(caught("supabase.from('teams').update({ name: /\\)\\)/.source, sort_order: 1 })")).toBe(true)
+    expect(caught("supabase.from('teams').update({ ['sort_order']: 1 })")).toBe(true)
+    expect(caught("supabase.from('teams').update({ ratio: a++ / b, sort_order: 1 })")).toBe(true)
+    expect(caught("supabase.from('teams').update({ [('sort_order')]: 1 })")).toBe(true)
+    // A payload split across lines is caught on the line that names it.
+    expect(caught('  sort_order: n,')).toBe(true)
+
+    // And the writes this data layer legitimately makes are silent, because
+    // they do not name the column at all.
+    expect(caught("supabase.from('teams').update({ name }).eq('id', id)")).toBe(false)
+    expect(caught("supabase.from('teams').update({ bib_colour: c }).eq('id', id)")).toBe(false)
+    expect(caught("supabase.rpc('set_team_order', teamOrderRequest(ids, expected))")).toBe(false)
+    // The pinned reads themselves, which must not fire or the list would be
+    // unsatisfiable.
+    for (const line of pinned) expect(caught(line)).toBe(false)
+    // The names that merely contain the column's, which carry no word
+    // boundary before `sort` and are a constraint and an RPC parameter.
+    expect(caught('  p_expected_sort_orders: (number | null)[]')).toBe(false)
+    expect(caught('teams_sort_order_unique')).toBe(false)
+  })
+
+  it('the save is ONE rpc call to set_team_order, carrying the two aligned arrays', () => {
+    const src = withoutComments(read('lib/queries.ts'))
+    const hook = between(src, 'export function useSaveTeamOrder', 'export function isMissingRelation')
+    expect(hook.length).toBeGreaterThan(0)
+    // Exactly one rpc call in the save, and it is this function.
+    const calls = [...hook.matchAll(/supabase\.rpc\(\s*'([^']+)'/g)].map((m) => m[1])
+    expect(calls).toEqual(['set_team_order'])
+    // The request is built by the pure helper, so the alignment of the two
+    // arrays has one implementation and one set of tests. Spelling the
+    // object out at the call site is how they drift apart.
+    expect(hook).toMatch(/supabase\.rpc\('set_team_order', teamOrderRequest\(orderedIds, expected\)\)/)
+    expect(hook).not.toMatch(/p_team_ids:/)
+    // No clear-then-place phase survives anywhere in the module.
+    expect(src).not.toMatch(/clearPosition|setPosition|readPositions|teamOrderStore/)
+  })
+
+  it('the stale refusal is matched on the DETAIL token, never on P0001 alone', () => {
+    // P0001 also covers every malformed request the function refuses, so a
+    // client keying on the code would say "another admin saved a different
+    // order" for its own defect, and would say nothing when an admin really
+    // was overtaken. Both wrong answers render a plausible sentence, which is
+    // why this is pinned in the source as well as behaviourally.
+    const src = withoutComments(read('lib/queries.ts'))
+    const fn = between(src, 'export function teamOrderError', 'export interface SaveTeamOrderVariables')
+    expect(fn.length).toBeGreaterThan(0)
+    // The token appears, and every branch that returns the concurrency error
+    // tests it.
+    expect(fn).toMatch(/details === 'stale_order'/)
+    for (const line of fn.split('\n')) {
+      if (/return new TeamOrderChanged/.test(line)) {
+        expect(line, 'a stale branch that does not test the token').toMatch(/stale_order/)
+      }
+    }
+    // 42501 stays its own answer rather than folding into either.
+    expect(fn).toMatch(/code === '42501'/)
+    expect(fn).toMatch(/TeamOrderNotPermitted/)
+  })
+
+  it('nothing retries the save on its own', () => {
+    // A retry of a stale refusal can never succeed: the snapshot it carries
+    // is the stale one. A retry of anything else would write twice.
+    const src = withoutComments(read('lib/queries.ts'))
+    const hook = between(src, 'export function useSaveTeamOrder', 'export function isMissingRelation')
+    expect(hook).not.toMatch(/\bretry\b/)
+    const screen = withoutComments(read('routes/AdminTeams.tsx'))
+    expect(screen).not.toMatch(/save\.mutate\([\s\S]{0,400}save\.mutate\(/)
+  })
+
+  it('the teams read itself never touches the field: the club order is a separate answer', () => {
+    // A `.order('sort_order')` or a sort on `sortOrder` inside useTeams would
+    // make the club order the display order on every screen at once. The
+    // read body is pinned as naming neither spelling; the column reaches it
+    // only through TEAM_COLS and toTeam, which are checked above.
+    const src = withoutComments(read('lib/queries.ts'))
+    const body = /export function useTeams\(\) \{([\s\S]*?)\n\}/.exec(src)
+    expect(body, 'useTeams').not.toBeNull()
+    expect(body![1]).not.toMatch(/sortOrder|sort_order/)
+    expect(body![1]).toContain("select(TEAM_COLS).order('name'")
+  })
+})
+
+describe('no player level ability field exists', () => {
+  it('the Player shape carries no ability, rating, level or band', () => {
+    const src = withoutComments(read('lib/data.ts'))
+    const player = /export interface Player \{([^}]*)\}/.exec(src)
+    expect(player, 'the Player model').not.toBeNull()
+    expect(player![1]).not.toMatch(/\b(ability|rating|level|band|skill|sortOrder|sort_order)\w*\s*[:?]/i)
+  })
+
+  it('no application source names a player ability column', () => {
     const offenders: string[] = []
     for (const rel of applicationSources()) {
-      // A comment naming what COACH-1B will do is the only permitted
-      // mention. Anything else is a consumer arriving early.
       const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
-      code.split('\n').forEach((line, i) => {
-        if (!/sort_order|sortOrder/.test(line)) return
-        offenders.push(`${rel}:${i + 1}: ${line.trim()}`)
-      })
+      if (/player_(ability|rating|level|band)|players\.(ability|rating|level|band)/.test(code)) offenders.push(rel)
     }
     expect(offenders).toEqual([])
+  })
+})
+
+describe('only the reviewed COACH-1B boundary consumes the column', () => {
+  it('no application source outside the reviewed list names sort_order or sortOrder outside a comment', () => {
+    const offenders: string[] = []
+    for (const rel of applicationSources()) {
+      if (REVIEWED_CONSUMERS.includes(rel)) continue
+      offenders.push(...mentions(rel))
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('every reviewed consumer actually names it, so the list cannot carry a file that stopped being one', () => {
+    for (const rel of REVIEWED_CONSUMERS) expect(mentions(rel), rel).not.toEqual([])
+  })
+
+  it('the Teams screen is the only screen on the order, and reaches it through the helper and the one mutation', () => {
+    const screen = withoutComments(read('routes/AdminTeams.tsx'))
+    expect(screen).toMatch(/from '\.\.\/lib\/teamOrder'/)
+    expect(screen).toMatch(/useSaveTeamOrder/)
+    // The snapshot the save refuses against is built by the helper, so the
+    // screen never reads the field itself (the sweep above would list it).
+    expect(screen).toMatch(/expected: draft\?\.expected \?\? teamPositions\(teams\)/)
+    // The snapshot is never rebuilt from a later read: it is taken when the
+    // draft is created and checked against each fresh read.
+    // A later move keeps the draft's snapshot as it is, a null left by a
+    // failed save included, rather than taking a fresh one.
+    expect(screen).toMatch(/expected: draft \? draft\.expected : teamPositions\(teams\) \}\)/)
+    expect(screen).toMatch(/snapshotAfterRead\(draft\.expected, read\)/)
+    // After its own save the snapshot is what the save wrote, never a read,
+    // and a draft is made for that comparison whether or not one existed.
+    // The rule itself is in teamOrder.ts and is tested there; the screen
+    // only has to hand it the ids it sent. The callback bodies are read
+    // WHOLE below, which is what stops a second decision sitting beside it.
+    expect(screen).toMatch(/setSavedAs\(intendedPositions\(vars\.orderedIds\)\)/)
+    expect(screen).toMatch(/setDraft\(draftAfterSaved\(vars\.orderedIds\)\)/)
+    // The success note is derived from the read agreeing with what was
+    // saved, never a flag set true on success and cleared by hand.
+    expect(screen).toMatch(/const orderSaved = savedAs !== null && positionsAgree\(savedAs, teamPositions\(teams\)\)/)
+    expect(screen).not.toMatch(/setOrderSaved/)
+    // No other route, component or hook touches the helper or the mutation.
+    const others = applicationSources().filter(
+      (rel) => rel !== REVIEWED_SCREEN && !REVIEWED_CONSUMERS.includes(rel) && rel.startsWith('src/'),
+    )
+    const offenders = others.filter((rel) => {
+      const code = withoutComments(readFileSync(join(process.cwd(), rel), 'utf8'))
+      // Any import specifier that resolves to the helper, from any depth
+      // (`./teamOrder` beside it, `../lib/teamOrder` from a route, and the
+      // deeper relative forms a component or a hook would use), plus the
+      // mutation and the helper's own names.
+      return /from '(\.\.?\/)+(lib\/)?teamOrder'|useSaveTeamOrder|clubOrder\(|moveTeam\(|teamOrderRequest\(/.test(code)
+    })
+    expect(offenders).toEqual([])
+  })
+
+  it('the save outcome is handled in the hook\'s own callbacks, ahead of the awaited invalidation', () => {
+    // TanStack awaits the hook level onSuccess, then onSettled, before the
+    // per-call callbacks run, and onSettled returns the invalidation, which
+    // resolves when the teams refetch has landed. So anything the screen
+    // must have in place before that read (the snapshot it is compared
+    // against) goes through the hook's callbacks, and the flag that says a
+    // read is awaited is armed before the write goes out.
+    const src = withoutComments(read('lib/queries.ts'))
+    const hook = between(src, 'export function useSaveTeamOrder', 'export function isMissingRelation')
+    expect(hook).toMatch(/onSuccess: \(_data, vars\) => callbacks\?\.onSuccess\?\.\(vars\)/)
+    expect(hook).toMatch(/onError: \(error, vars\) => callbacks\?\.onError\?\.\(error, vars\)/)
+    expect(hook).toMatch(/onSettled: \(\) => qc\.invalidateQueries\(\{ queryKey: \['teams'\] \}\)/)
+    expect(hook.indexOf('onSuccess:')).toBeLessThan(hook.indexOf('onSettled:'))
+    expect(hook.indexOf('onError:')).toBeLessThan(hook.indexOf('onSettled:'))
+    const screen = withoutComments(read('routes/AdminTeams.tsx'))
+    expect(screen).toMatch(/useSaveTeamOrder\(\{/)
+    // A FAILED SAVE LEAVES NO DRAFT, and the whole callback is read rather
+    // than searched. A negative on one spelling is not enough: forbidding
+    // `instanceof TeamOrder` still admits `error.name === 'TeamOrderChanged'`
+    // placed AFTER the required call, which would reinstate the branch with
+    // every assertion here passing. So the body must be exactly the one
+    // statement, and there is then nowhere for a second decision to sit.
+    const onError = between(screen, 'onError:', '})\n  const [name')
+    expect(onError.length).toBeGreaterThan(0)
+    expect(onError.replace(/\s+/g, ' ').trim()).toBe('onError: () => setDraft(null),')
+    // Same for the accepted outcome: two statements, both delegating, and
+    // no third deciding anything.
+    const onSuccess = between(screen, 'onSuccess: (vars) => {', 'onError:')
+    expect(onSuccess.replace(/\s+/g, ' ').trim()).toBe(
+      'onSuccess: (vars) => { setSavedAs(intendedPositions(vars.orderedIds)) setDraft(draftAfterSaved(vars.orderedIds)) },',
+    )
+    expect(screen).not.toMatch(/expected: vars\.expected \}\)/)
+    // A draft ALWAYS carries the snapshot it was drawn from. `OrderDraft`
+    // says so in its type, and the branches that once read a null one are
+    // gone: null used to mean "adopt the next read as it comes", which is
+    // the silent overwrite itself. A screen reintroducing either is a
+    // finding, whichever end it comes from.
+    expect(screen).not.toMatch(/expected: null/)
+    expect(screen).not.toMatch(/expected === null/)
+    expect(read('lib/teamOrder.ts')).toMatch(/expected: TeamPosition\[\]\n\}/)
+    expect(screen).not.toMatch(/d === null \? null/)
+    expect(screen).not.toMatch(/TeamOrderReadFailed/)
+    // The mutate call carries the variables and nothing else.
+    expect(screen).toMatch(/save\.mutate\(\{ orderedIds: draftIds, expected: draft\?\.expected \?\? teamPositions\(teams\) \}\)/)
+    expect(screen).not.toMatch(/save\.mutate\([^)]*onSuccess/)
+    // Armed before each write, not in its callbacks.
+    const saveOrder = screen.slice(screen.indexOf('const saveOrder = () => {'), screen.indexOf('save.mutate('))
+    expect(saveOrder).toContain('setAwaitingRead(true)')
+    const add = screen.slice(screen.indexOf('const add = () => {'), screen.indexOf('insert.mutate('))
+    expect(add).toContain('setAwaitingRead(true)')
+  })
+
+  it('the Teams screen saves only on a press: no effect calls the mutation', () => {
+    // Opening the screen writes nothing. The realistic way to break that is
+    // an effect that "keeps the order in sync"; every useEffect body on the
+    // screen is read and none may reach `.mutate(`. The pure tests cover
+    // the rest of the rule (a render writes nothing is pinned by the screen
+    // test, which counts the mutations a static render makes).
+    const screen = withoutComments(read('routes/AdminTeams.tsx'))
+    const effects = [...screen.matchAll(/useEffect\(\(\) => \{([\s\S]*?)\n {2}\}, \[/g)].map((m) => m[1])
+    expect(effects.length).toBeGreaterThanOrEqual(1)
+    for (const body of effects) expect(body).not.toMatch(/\.mutate\(|mutateAsync/)
+  })
+
+  it('no Edge Function reads or forwards it', () => {
+    for (const rel of applicationSources().filter((f) => f.startsWith('supabase/functions/'))) {
+      expect(mentions(rel), rel).toEqual([])
+    }
+  })
+
+  it('the grouping suggestion still names no column, and the register still hands it no order', () => {
+    // sessionSetup.invariant.test.ts bans the column name from the generator
+    // body; this checks that ban is still there and that the register's one
+    // call still passes null, so the files cannot be loosened one at a time.
+    const guard = read('lib/sessionSetup.invariant.test.ts')
+    expect(guard).toContain("expect(src).not.toMatch(/\\bsort_order\\b/)")
+    const register = withoutComments(read('routes/SessionRegister.tsx'))
+    const calls = [...register.matchAll(/planSetup\(([^)]*)\)/g)].map((m) => m[1].replace(/\s+/g, ' ').trim())
+    expect(calls).toEqual(['rows, live, null'])
+    expect(register).not.toMatch(/teamOrder|clubOrder|positionByTeam/)
   })
 
   it('the comment stripping keeps code beside a closed block comment and drops a block comment interior', () => {
@@ -118,29 +552,25 @@ describe('the team order column has no consumer yet', () => {
     expect(withoutComments('const y = 2 // sortOrder later')).not.toContain('sortOrder')
     expect(withoutComments("const u = 'https://example.test/sort_order'")).toContain('sort_order')
   })
-
-  it('the grouping suggestion keeps its own tripwire against the column', () => {
-    // sessionSetup.invariant.test.ts bans the column name from the
-    // generator body; this only checks that ban is still there, so the two
-    // files cannot be loosened one at a time without noticing.
-    const guard = read('lib/sessionSetup.invariant.test.ts')
-    expect(guard).toContain("expect(src).not.toMatch(/\\bsort_order\\b/)")
-  })
 })
 
 describe('labels stay alphabetical whatever order the club states', () => {
-  it('sessionTeamsLabel sorts by name, not by insertion order', () => {
-    // Insertion order is deliberately not alphabetical, and the ids are
-    // chosen so that neither id order nor insertion order agrees with the
-    // name order the label must show.
+  it('sessionTeamsLabel sorts by name even when every Team carries a contrary club position', () => {
+    // The club order is deliberately the REVERSE of the alphabetical one,
+    // and the insertion order agrees with neither, so a label that read
+    // either would come out differently.
     const teams: Record<string, Team | undefined> = {
-      t1: { id: 't1', name: 'Zulu', bibColour: null },
-      t2: { id: 't2', name: 'Alpha', bibColour: 'red' },
-      t3: { id: 't3', name: 'Mike', bibColour: null },
-      t4: { id: 't4', name: 'Bravo', bibColour: null },
+      t1: { id: 't1', name: 'Zulu', bibColour: null, sortOrder: 1 },
+      t2: { id: 't2', name: 'Alpha', bibColour: 'red', sortOrder: 4 },
+      t3: { id: 't3', name: 'Mike', bibColour: null, sortOrder: 2 },
+      t4: { id: 't4', name: 'Bravo', bibColour: null, sortOrder: 3 },
     }
     expect(sessionTeamsLabel({ teamId: null, teamIds: ['t1', 't3', 't2'] }, teams)).toBe('Alpha, Mike, Zulu')
     expect(sessionTeamsLabel({ teamId: null, teamIds: ['t4', 't2'] }, teams)).toBe('Alpha, Bravo')
     expect(sessionTeamsLabel({ teamId: null, teamIds: ['t1', 't2', 't3', 't4'] }, teams)).toBe('All teams')
+  })
+
+  it('the label module never reads the field', () => {
+    expect(withoutComments(read('lib/sessionTeams.ts'))).not.toMatch(/sortOrder|sort_order/)
   })
 })

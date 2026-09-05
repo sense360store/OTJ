@@ -27,8 +27,8 @@ import { MemoryRouter } from 'react-router-dom'
 import type { Team } from '../lib/data'
 
 const TEAMS: Team[] = [
-  { id: 'titans', name: 'Titans', bibColour: 'blue' },
-  { id: 'trojans', name: 'Trojans', bibColour: 'red' },
+  { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: null },
+  { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: null },
 ]
 
 // What each read answers, so one describe can vary it without a second mock.

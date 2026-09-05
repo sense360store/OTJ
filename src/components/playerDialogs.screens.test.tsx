@@ -25,8 +25,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { RegisteredPlayer, Season, Team } from '../lib/data'
 
 const TEAMS: Team[] = [
-  { id: 'titans', name: 'Titans', bibColour: 'blue' },
-  { id: 'trojans', name: 'Trojans', bibColour: 'red' },
+  { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: null },
+  { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: null },
 ]
 
 const CURRENT: Season = {

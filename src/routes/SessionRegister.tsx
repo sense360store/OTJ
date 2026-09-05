@@ -667,10 +667,13 @@ export function TonightScreen({ session }: { session: Session }) {
   // COACH-3's suggestion, derived from the rows and the live draft on every
   // read. Nothing about it is stored and nothing about it writes.
   //
-  // The club's team order is null because COACH-1 has not shipped: `teams`
-  // carries id, name and bib_colour and nothing else. The plan reports that
-  // honestly rather than treating alphabetical as ability, and this call
-  // site is the one line that changes when the order arrives.
+  // The club's team order is handed as null ON PURPOSE. COACH-1 stores it and
+  // the Teams admin screen sets it, but connecting it to this suggestion is
+  // a separate decision: the day this call passes the stored order is the
+  // day the plan starts claiming to know which teams are adjacent, and that
+  // is made in the open rather than by a column arriving. The plan reports
+  // the absence honestly rather than treating alphabetical as ability, and
+  // this call site is the one line that changes when that decision is made.
   //
   // A session with no covered teams gets no suggestion at all. Coverage was
   // never set, so there is no roster to work from, and the screen already

@@ -504,8 +504,8 @@ describe('PlannerActionsView share control', () => {
 // without unmounting them (a failure re-enables them for a retry). readOnly is
 // the separate viewer state, unchanged by this work.
 const teams: Team[] = [
-  { id: 't1', name: 'Titans', bibColour: null },
-  { id: 't2', name: 'Trojans', bibColour: null },
+  { id: 't1', name: 'Titans', bibColour: null, sortOrder: null },
+  { id: 't2', name: 'Trojans', bibColour: null, sortOrder: null },
 ]
 const venues: Venue[] = [
   { id: 'v1', name: 'Springmill 3G' },

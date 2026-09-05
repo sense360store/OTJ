@@ -295,10 +295,13 @@ export function recommendSetup(expected: ExpectedAttendance): SetupRecommendatio
 
 // The club's own ordering of its teams, when it has one.
 //
-// COACH-1 is the slice that stores it (`teams.sort_order`), and it HAS NOT
-// SHIPPED: `teams` carries id, name and bib_colour and nothing else today.
-// So this arrives as a parameter rather than being read off a team, and
-// its absence is a first-class answer rather than a silent fallback.
+// COACH-1 stores it (the team order column, set on the Teams admin screen)
+// and this generator still takes it as a PARAMETER rather than reading it
+// off a team: the register hands it null today, and connecting the stored
+// order to this suggestion is a separate decision made in the open, because
+// the day it is connected is the day a suggestion starts claiming to know
+// which teams are adjacent. Its absence is a first-class answer rather
+// than a silent fallback.
 //
 // It is NOT an ability score and there is no per-player field. A child's
 // band is derived: child, current registration, team, that team's

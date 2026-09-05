@@ -109,6 +109,41 @@ export const roleRow = (page, label) => card(page, 'Roles').locator('.admin-row'
    outright, which is exactly the identity the row is being scoped to. */
 export const teamRow = (page, name) =>
   page.locator('.admin-row').filter({ has: page.getByRole('button', { name: `Remove ${name}`, exact: true }) })
+/* COACH-1B. The team rows in the order the page SHOWS them, read off each
+   row's own Remove control, and the draft position each row shows beside its
+   Move controls. Both are the thing the order entries are about: a row count
+   is true of any order. */
+export const orderOf = (page) =>
+  page
+    .locator('.admin-row')
+    .evaluateAll((rows) =>
+      rows.map((r) => (r.querySelector('button[aria-label^="Remove "]')?.getAttribute('aria-label') ?? '').replace(/^Remove /, '')),
+    )
+export const positionsOf = (page) => page.locator('.admin-position').allTextContents()
+export const saveOrderButton = (page) => page.locator('.admin-order-save button')
+/* COACH-1B. What the order write carries beside the order: the positions the
+   screen READ, in the order the read returned them, so a position another
+   admin stored in between is refused rather than overwritten. The fixture
+   club is stored 2, 1, 3, 5, 4 in array order (see fixtures.ts TEAMS). */
+const READ_POSITIONS = [
+  { id: 'titans', sortOrder: 2 },
+  { id: 'trojans', sortOrder: 1 },
+  { id: 'gladiators', sortOrder: 3 },
+  { id: 'spartans', sortOrder: 5 },
+  { id: 'argonauts', sortOrder: 4 },
+]
+const UNSET_POSITIONS = READ_POSITIONS.map((r) => ({ id: r.id, sortOrder: null }))
+/* The LAST write of a name, with its arguments, compared whole: the order
+   entries claim what was sent, which a counter cannot say. */
+const lastWriteWas = (page, name, vars) =>
+  page.evaluate(
+    ({ name, vars }) => {
+      const log = window.__adminCalls
+      const w = [...(log?.writes ?? [])].reverse().find((x) => x.name === name)
+      return !!w && JSON.stringify(w.vars) === JSON.stringify(vars)
+    },
+    { name, vars },
+  )
 // The one input inside a role row, which exists only while that row is being
 // renamed. The New role field is outside .admin-row, so this cannot reach it.
 const renameInput = (page) => card(page, 'Roles').locator('.admin-row input')
@@ -184,6 +219,7 @@ export const WRITE_NAMES = [
   'renameTeam',
   'deleteTeam',
   'setTeamBib',
+  'saveTeamOrder',
 ]
 
 export const calls = (name, want) => (page) =>
@@ -1486,6 +1522,249 @@ export const TEAM_FLOWS = [
       await pause(page)
       return click(modalButton(page, 'Remove'))
     },
+  },
+
+  /* ---- COACH-1B: the club's team order ----
+     The order is a DRAFT until Save team order: every entry that moves a row
+     and does not press Save proves nothing was written, and the ones that
+     press it prove what was sent, whole. */
+  {
+    key: 'teams-order-default',
+    screen: 'adminteams',
+    note: 'the club order as it opens, configured: the saved order sentence, the rows by STORED position rather than by name or by the read order, the two boundaries disabled, Save withheld, and nothing written',
+    proof: async (page) =>
+      (await page.locator('.admin-hint').filter({ hasText: 'Saved club order' }).count()) === 1 &&
+      (await orderOf(page)).join(',') === 'Trojans,Titans,Gladiators,Argonauts,Spartans' &&
+      (await positionsOf(page)).join(',') === '1,2,3,4,5' &&
+      (await page.getByRole('button', { name: 'Move Trojans up', exact: true }).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Move Spartans down', exact: true }).isDisabled()) &&
+      !(await page.getByRole('button', { name: 'Move Trojans down', exact: true }).isDisabled()) &&
+      !(await page.getByRole('button', { name: 'Move Spartans up', exact: true }).isDisabled()) &&
+      (await saveOrderButton(page).isDisabled()) &&
+      (await noWrites(page)),
+  },
+  {
+    key: 'teams-order-unset',
+    screen: 'adminteams',
+    state: 'orderunset',
+    note: 'a club that has never placed a team: the order is SAID to be not set, the list is alphabetical and named as such, and Save is offered without a move',
+    proof: async (page) =>
+      (await page.locator('.note-warning').filter({ hasText: 'Team order is not set' }).count()) === 1 &&
+      (await page.locator('.note-warning').filter({ hasText: 'listed alphabetically, which is not a coaching order' }).count()) === 1 &&
+      (await orderOf(page)).join(',') === 'Argonauts,Gladiators,Spartans,Titans,Trojans' &&
+      !(await saveOrderButton(page).isDisabled()) &&
+      (await noWrites(page)),
+  },
+  {
+    key: 'teams-order-incomplete',
+    screen: 'adminteams',
+    state: 'orderincomplete',
+    note: 'two teams placed and three not: the incomplete sentence names the three, the placed teams lead by position and the rest follow alphabetically',
+    proof: async (page) =>
+      (await page
+        .locator('.note-warning')
+        .filter({ hasText: 'Team order is incomplete: Argonauts, Gladiators and Spartans have no position yet' })
+        .count()) === 1 &&
+      (await orderOf(page)).join(',') === 'Trojans,Titans,Argonauts,Gladiators,Spartans' &&
+      !(await saveOrderButton(page).isDisabled()) &&
+      (await noWrites(page)),
+  },
+  {
+    key: 'teams-order-moved',
+    screen: 'adminteams',
+    note: 'one press of Move up: the row moves, every position renumbers, the draft is named as unsaved, Save is offered, and NOTHING is written',
+    proof: async (page) =>
+      (await orderOf(page)).join(',') === 'Titans,Trojans,Gladiators,Argonauts,Spartans' &&
+      (await positionsOf(page)).join(',') === '1,2,3,4,5' &&
+      (await page.getByRole('button', { name: 'Move Titans up', exact: true }).isDisabled()) &&
+      !(await page.getByRole('button', { name: 'Move Trojans up', exact: true }).isDisabled()) &&
+      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 1 &&
+      (await page.locator('.admin-hint').filter({ hasText: 'changes not yet stored' }).count()) === 1 &&
+      !(await saveOrderButton(page).isDisabled()) &&
+      (await noWrites(page)),
+    drive: (page) => click(page.getByRole('button', { name: 'Move Titans up', exact: true })),
+  },
+  {
+    key: 'teams-order-saved',
+    screen: 'adminteams',
+    note: 'the moved order saved: ONE write carrying the whole intended order and the positions the screen read, the success note with focus on it, the saved order sentence again, Save withheld again, and the refetch NOT taken for another admin\'s change',
+    proof: async (page) =>
+      (await calls('saveTeamOrder', 1)(page)) &&
+      (await page.locator('.note-warning[role="status"]').count()) === 0 &&
+      (await lastWriteWas(page, 'saveTeamOrder', {
+        orderedIds: ['titans', 'trojans', 'gladiators', 'argonauts', 'spartans'],
+        expected: READ_POSITIONS,
+      })) &&
+      (await page.locator('.note-success[role="status"]').filter({ hasText: 'Team order saved' }).count()) === 1 &&
+      (await page.evaluate(() => document.activeElement?.querySelector('[role="status"]')?.textContent ?? '')) === 'Team order saved.' &&
+      (await orderOf(page)).join(',') === 'Titans,Trojans,Gladiators,Argonauts,Spartans' &&
+      (await positionsOf(page)).join(',') === '1,2,3,4,5' &&
+      (await page.locator('.admin-hint').filter({ hasText: 'Saved club order' }).count()) === 1 &&
+      (await saveOrderButton(page).isDisabled()),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await click(saveOrderButton(page))),
+  },
+  {
+    key: 'teams-order-accepted-unset',
+    screen: 'adminteams',
+    state: 'orderunset',
+    note: 'Save pressed on an unset club with nothing moved: the alphabetical order shown is accepted as the club order, in one write, and the screen says it is saved',
+    proof: async (page) =>
+      (await calls('saveTeamOrder', 1)(page)) &&
+      (await lastWriteWas(page, 'saveTeamOrder', {
+        orderedIds: ['argonauts', 'gladiators', 'spartans', 'titans', 'trojans'],
+        expected: UNSET_POSITIONS,
+      })) &&
+      (await page.locator('.note-success[role="status"]').filter({ hasText: 'Team order saved' }).count()) === 1 &&
+      (await page.locator('.admin-hint').filter({ hasText: 'Saved club order' }).count()) === 1,
+    drive: (page) => click(saveOrderButton(page)),
+  },
+  {
+    key: 'teams-order-pending',
+    screen: 'adminteams',
+    state: 'inflight',
+    note: 'the order write in flight: the gerund label, every Move frozen, Add team and Remove frozen so the draft cannot be invalidated under the write (Enter in the New team field adds nothing either), and a rename still live',
+    proof: async (page) =>
+      (await saveOrderButton(page).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Saving order…', exact: true }).count()) === 1 &&
+      (await page.getByRole('button', { name: 'Move Gladiators up', exact: true }).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Move Gladiators down', exact: true }).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Remove Gladiators', exact: true }).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Add team', exact: true }).isDisabled()) &&
+      !(await teamRow(page, TEAMS.first).locator('input').isDisabled()) &&
+      (await calls('insertTeam', 0)(page)) &&
+      (await calls('saveTeamOrder', 1)(page)),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await click(saveOrderButton(page))) &&
+      (await fillIn(page.getByLabel('New team', { exact: true }), TYPED_TEAM)) &&
+      (await page.getByLabel('New team', { exact: true }).press('Enter').then(() => true)),
+  },
+  {
+    key: 'teams-order-failed',
+    screen: 'adminteams',
+    state: 'writefails',
+    note: 'the order write refused: the alert says so and holds focus, the list keeps the arrangement as unsaved after the refetch lands, no success is claimed, no refresh warning is raised, and Save is offered again rather than the refusal being swallowed',
+    proof: async (page) =>
+      (await page.locator('.note-danger[role="alert"]').filter({ hasText: 'Could not save the team order' }).count()) === 1 &&
+      (await page.evaluate(() => !!document.activeElement?.querySelector('.note-danger[role="alert"]'))) &&
+      (await orderOf(page)).join(',') === 'Titans,Trojans,Gladiators,Argonauts,Spartans' &&
+      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 1 &&
+      (await page.locator('.note-warning[role="status"]').count()) === 0 &&
+      !(await saveOrderButton(page).isDisabled()) &&
+      (await page.locator('.note-success').count()) === 0 &&
+      (await calls('saveTeamOrder', 1)(page)),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await click(saveOrderButton(page))),
+  },
+  {
+    key: 'teams-order-refreshed-under-draft',
+    screen: 'adminteams',
+    note: "another admin's order landing under an open draft: the draft is dropped, the screen says why as a status, the list shows what is now stored, Save is withheld again, and this screen wrote nothing",
+    proof: async (page) =>
+      (await page.locator('.note-warning[role="status"]').filter({ hasText: "The club's teams changed while the order was being arranged" }).count()) === 1 &&
+      (await orderOf(page)).join(',') === 'Spartans,Argonauts,Gladiators,Titans,Trojans' &&
+      (await positionsOf(page)).join(',') === '1,2,3,4,5' &&
+      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 0 &&
+      (await saveOrderButton(page).isDisabled()) &&
+      (await noWrites(page)),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await page
+        .evaluate(() => window.__adminStore.saveTeamOrder(['spartans', 'argonauts', 'gladiators', 'titans', 'trojans']))
+        .then(() => true)),
+  },
+  {
+    key: 'teams-order-refresh-keeps-agreeing-draft',
+    screen: 'adminteams',
+    note: 'a refetch that changed nothing lands under an open draft: the arrangement is kept, no status is raised, and Save stays offered',
+    proof: async (page) =>
+      (await page.locator('.note-warning[role="status"]').count()) === 0 &&
+      (await orderOf(page)).join(',') === 'Titans,Trojans,Gladiators,Argonauts,Spartans' &&
+      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 1 &&
+      !(await saveOrderButton(page).isDisabled()) &&
+      (await noWrites(page)),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await page
+        .evaluate(() => window.__adminStore.saveTeamOrder(['trojans', 'titans', 'gladiators', 'argonauts', 'spartans']))
+        .then(() => true)),
+  },
+  {
+    key: 'teams-order-blocked-while-adding',
+    screen: 'adminteams',
+    state: 'inflight',
+    note: 'a team insert in flight: Save team order is withheld until the read that carries the new team, so an order that does not know it cannot be sent',
+    proof: async (page) =>
+      (await calls('insertTeam', 1)(page)) &&
+      (await page.getByRole('button', { name: 'Adding…', exact: true }).count()) === 1 &&
+      (await saveOrderButton(page).isDisabled()) &&
+      (await calls('saveTeamOrder', 0)(page)),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await fillIn(page.getByLabel('New team', { exact: true }), TYPED_TEAM)) &&
+      (await click(page.getByRole('button', { name: 'Add team', exact: true }))),
+  },
+  {
+    key: 'teams-order-saved-then-other-admin',
+    screen: 'adminteams',
+    note: "another admin's order landing after a successful save: the success note goes, because the order shown is no longer the one this admin saved, the list shows what is stored, and Save is withheld",
+    proof: async (page) =>
+      (await calls('saveTeamOrder', 1)(page)) &&
+      (await page.locator('.note-success').count()) === 0 &&
+      (await orderOf(page)).join(',') === 'Spartans,Argonauts,Gladiators,Titans,Trojans' &&
+      (await page.locator('.admin-hint').filter({ hasText: 'Saved club order. Move a team' }).count()) === 1 &&
+      (await saveOrderButton(page).isDisabled()),
+    drive: async (page) =>
+      (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
+      (await click(saveOrderButton(page))) &&
+      (await page
+        .locator('.admin-hint')
+        .filter({ hasText: 'Saved club order. Move a team' })
+        .waitFor()
+        .then(() => true)) &&
+      (await page
+        .evaluate(() => window.__adminStore.saveTeamOrder(['spartans', 'argonauts', 'gladiators', 'titans', 'trojans']))
+        .then(() => true)),
+  },
+  {
+    key: 'teams-order-accepted-then-other-admin',
+    screen: 'adminteams',
+    state: 'orderunset',
+    note: "the alphabetical order accepted without a move, then another admin's order landing: the success note goes and the list shows what is stored, so a save made with no draft is compared like any other",
+    proof: async (page) =>
+      (await calls('saveTeamOrder', 1)(page)) &&
+      (await page.locator('.note-success').count()) === 0 &&
+      (await orderOf(page)).join(',') === 'Spartans,Argonauts,Gladiators,Titans,Trojans' &&
+      (await saveOrderButton(page).isDisabled()),
+    drive: async (page) =>
+      (await click(saveOrderButton(page))) &&
+      (await page
+        .locator('.admin-hint')
+        .filter({ hasText: 'Saved club order. Move a team' })
+        .waitFor()
+        .then(() => true)) &&
+      (await page
+        .evaluate(() => window.__adminStore.saveTeamOrder(['spartans', 'argonauts', 'gladiators', 'titans', 'trojans']))
+        .then(() => true)),
+  },
+  {
+    key: 'teams-order-new-team-unplaced',
+    screen: 'adminteams',
+    note: 'a team added to a configured club is UNPLACED: the order reads incomplete naming it, it lands last, and no order was written for it',
+    proof: async (page) =>
+      (await page
+        .locator('.note-warning')
+        .filter({ hasText: `Team order is incomplete: ${TYPED_TEAM} has no position yet` })
+        .count()) === 1 &&
+      (await orderOf(page)).join(',') === `Trojans,Titans,Gladiators,Argonauts,Spartans,${TYPED_TEAM}` &&
+      (await calls('insertTeam', 1)(page)) &&
+      (await calls('saveTeamOrder', 0)(page)),
+    drive: async (page) =>
+      (await fillIn(page.getByLabel('New team', { exact: true }), TYPED_TEAM)) &&
+      (await click(page.getByRole('button', { name: 'Add team', exact: true }))),
   },
 ]
 

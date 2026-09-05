@@ -20,8 +20,8 @@ import type { RegisterEntry } from '../lib/register'
 const AT = '2026-08-15T09:00:00.000Z'
 
 const TEAMS: Team[] = [
-  { id: 't1', name: 'Titans', bibColour: 'red' },
-  { id: 't2', name: 'Trojans', bibColour: null },
+  { id: 't1', name: 'Titans', bibColour: 'red', sortOrder: null },
+  { id: 't2', name: 'Trojans', bibColour: null, sortOrder: null },
 ]
 
 const player = (id: string, name: string, teamId: string): RegisteredPlayer => ({

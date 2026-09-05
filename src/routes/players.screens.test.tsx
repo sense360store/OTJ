@@ -47,8 +47,8 @@ const PAST: Season = {
 }
 
 const CLUB_TEAMS: Team[] = [
-  { id: 'titans', name: 'Titans', bibColour: 'blue' },
-  { id: 'trojans', name: 'Trojans', bibColour: 'red' },
+  { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: null },
+  { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: null },
 ]
 
 const row = (over: Partial<RegisteredPlayer> & { playerId: string }): RegisteredPlayer => ({

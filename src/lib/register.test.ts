@@ -17,8 +17,8 @@ import type { Player, RegisteredPlayer, Team } from './data'
 // Names are synthetic, never real children.
 
 const teams: Team[] = [
-  { id: 't1', name: 'Titans', bibColour: 'red' },
-  { id: 't2', name: 'Trojans', bibColour: null },
+  { id: 't1', name: 'Titans', bibColour: 'red', sortOrder: null },
+  { id: 't2', name: 'Trojans', bibColour: null, sortOrder: null },
 ]
 
 const player = (id: string, name: string, teamId: string | null, shirt: number | null = null): Player => ({

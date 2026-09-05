@@ -709,13 +709,17 @@ create unique index teams_sort_order_unique
   on public.teams (club_id, sort_order) where sort_order is not null;
 ```
 
-### Why nothing existing can carry it
+**Built.** Applied to production as `0051_team_sort_order` on 2 September 2026
+(hosted `20260902150212`), exactly as written above, with `sort_order` on the
+`audit_teams()` allow list; the Teams admin screen sets it through COACH-1B.
 
-Verified against the schema (`00-current-state-audit.md` section 19).
-`public.teams` carries `id, club_id, name, created_at, bib_colour` and nothing
-else. A grep for `sort_order`, `display_order`, `position`, `rank` and `ability`
-across `src` and `supabase/migrations` returns nothing relevant. Every team order
-in the product is alphabetical.
+### Why nothing existing could carry it
+
+Verified against the schema when this was written (`00-current-state-audit.md`
+section 19). `public.teams` carried `id, club_id, name, created_at, bib_colour`
+and nothing else. A grep for `sort_order`, `display_order`, `position`, `rank`
+and `ability` across `src` and `supabase/migrations` returned nothing relevant.
+Every team order in the product was alphabetical.
 
 Three alternatives were considered and rejected: alphabetical (which for this
 club matches the ability order nowhere), `created_at` (which records when a row

@@ -11,7 +11,7 @@ import type { Team } from '../lib/data'
 // shapes the write is disabled, then re-enabled with the entries intact on
 // failure. The container owns the date arithmetic and the write loop.
 
-const teams: Team[] = [{ id: 't1', name: 'Titans', bibColour: null }]
+const teams: Team[] = [{ id: 't1', name: 'Titans', bibColour: null, sortOrder: null }]
 const weekRows: ApplyWeekRow[] = [
   { week: 1, templateName: 'Week 1: Passing', date: '2026-09-07', clash: false },
   { week: 2, templateName: 'Week 2: Shooting', date: '2026-09-14', clash: true },

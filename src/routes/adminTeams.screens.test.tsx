@@ -8,11 +8,20 @@
 // never access control, so removing one clears references rather than
 // deleting anything, and the dialog has to keep saying so.
 //
+// COACH-1B added the club's TEAM ORDER to this page: the list in club
+// order, Move up and Move down on every row, the three states said in
+// words, and one Save team order checkpoint. The static half of that is
+// pinned here: what each state says, that every control is named for its
+// own team, that the boundaries are disabled, that Save is offered when
+// pressing it would state something and withheld when it would not, and
+// that rendering the page writes nothing.
+//
 // WHAT IT DOES NOT DO, and why the harness exists. This project has no
 // DOM, so these are static renders: the dialog, a write in flight, a
-// refused rename and the focus rule are unreachable here. They are driven
-// in a browser through tools/visual/admin.mjs and measured in
-// tools/visual/checks.mjs.
+// refused rename, a press on Move up and the focus rule are unreachable
+// here. They are driven in a browser through tools/visual/admin.mjs and
+// measured in tools/visual/checks.mjs; the draft and save rules themselves
+// are pure and are driven in src/lib/teamOrder.test.ts.
 // =====================================================================
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -20,9 +29,9 @@ import { BIB_COLOURS } from '../lib/bibs'
 import type { Member, Session, Team } from '../lib/data'
 
 const TEAMS: Team[] = [
-  { id: 'titans', name: 'Titans', bibColour: 'blue' },
-  { id: 'trojans', name: 'Trojans', bibColour: 'red' },
-  { id: 'gladiators', name: 'Gladiators', bibColour: null },
+  { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: null },
+  { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: null },
+  { id: 'gladiators', name: 'Gladiators', bibColour: null, sortOrder: null },
 ]
 
 const MEMBERS = [
@@ -54,7 +63,13 @@ const query = <T,>(data: T, over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
-const mutation = () => ({ mutate: () => {}, isPending: false, isError: false, error: null })
+const writes: string[] = []
+const mutation = () => ({ mutate: () => void writes.push('write'), isPending: false, isError: false, error: null })
+/* The order save's own state, so a write in flight and a refused write can
+   be rendered without a DOM: the page reads isPending and error off the
+   mutation and nothing else. */
+const saveState: { isPending: boolean; isError: boolean; error: Error | null } = { isPending: false, isError: false, error: null }
+const insertState: { isPending: boolean } = { isPending: false }
 
 vi.mock('../lib/queries', () => ({
   useMyCapabilities: () => ({ caps: reads.caps, isPending: false }),
@@ -65,17 +80,19 @@ vi.mock('../lib/queries', () => ({
       isSuccess: !reads.loading && !reads.isError,
     }),
   useProfiles: () => query(MEMBERS),
-  useInsertTeam: mutation,
+  useInsertTeam: () => ({ ...mutation(), ...insertState }),
   useRenameTeam: mutation,
   useDeleteTeam: mutation,
   useSetTeamBibColour: mutation,
+  useSaveTeamOrder: () => ({ ...mutation(), ...saveState }),
 }))
 
 vi.mock('../context/SessionsContext', () => ({
   useSessions: () => ({ sessions: SESSIONS }),
 }))
 
-const { AdminTeams, BibColourField, DeleteTeamModal } = await import('./AdminTeams')
+const { AdminTeams, BibColourField, DeleteTeamModal, TEAM_ORDER_COPY, TeamOrderStatus } = await import('./AdminTeams')
+const { TeamOrderChanged, TeamOrderNotPermitted, TeamOrderRefused, saveFailureMessage } = await import('../lib/teamOrder')
 
 const page = (): string => renderToStaticMarkup(<AdminTeams />)
 
@@ -84,7 +101,29 @@ beforeEach(() => {
   reads.teams = TEAMS
   reads.loading = false
   reads.isError = false
+  writes.length = 0
+  saveState.isPending = false
+  saveState.isError = false
+  saveState.error = null
+  insertState.isPending = false
 })
+
+/* The rows in the order the page rendered them, read off each row's own
+   Remove control, which is named for its team. */
+const renderedOrder = (html: string): string[] =>
+  [...html.matchAll(/aria-label="Remove ([^"]+)"/g)].map((m) => m[1])
+
+const button = (html: string, label: string): string => {
+  const m = html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))
+  expect(m, label).not.toBeNull()
+  return m![0]
+}
+
+const saveButton = (html: string): string => {
+  const m = html.match(/<button[^>]*>(?:(?!<\/button>).)*Save team order(?:(?!<\/button>).)*<\/button>/s)
+  expect(m, 'Save team order').not.toBeNull()
+  return m![0]
+}
 
 describe('the page and its capability gate', () => {
   it('renders one h1 naming the page', () => {
@@ -246,3 +285,239 @@ describe('no inline font size or off scale step is left on the page', () => {
     expect(html).toMatch(/class="bib-swatch" style="background:#/)
   })
 })
+
+/* ---- COACH-1B: the club's team order ---- */
+
+const ORDERED: Team[] = [
+  { id: 'argonauts', name: 'Argonauts', bibColour: null, sortOrder: 3 },
+  { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: 1 },
+  { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: 2 },
+]
+
+describe('the team order says which of its three states it is in', () => {
+  it('says the order is not set when every team is unplaced, names the fallback as alphabetical, and lists alphabetically', () => {
+    const html = page()
+    expect(html).toContain('Team order is not set')
+    expect(html).toContain('listed alphabetically, which is not a coaching order')
+    expect(renderedOrder(html)).toEqual(['Gladiators', 'Titans', 'Trojans'])
+  })
+
+  it('says the order is incomplete, names the unplaced teams, and lists the placed teams first by position', () => {
+    reads.teams = [
+      { id: 'zulu', name: 'Zulu', bibColour: null, sortOrder: null },
+      { id: 'trojans', name: 'Trojans', bibColour: 'red', sortOrder: 2 },
+      { id: 'argonauts', name: 'Argonauts', bibColour: null, sortOrder: null },
+      { id: 'titans', name: 'Titans', bibColour: 'blue', sortOrder: 1 },
+    ]
+    const html = page()
+    expect(html).toContain('Team order is incomplete: Argonauts and Zulu have no position yet')
+    expect(renderedOrder(html)).toEqual(['Titans', 'Trojans', 'Argonauts', 'Zulu'])
+  })
+
+  it('renders the saved order by position when configured, whatever order the read returned', () => {
+    reads.teams = ORDERED
+    const html = page()
+    expect(html).toContain('Saved club order')
+    expect(html).not.toContain('Team order is not set')
+    expect(html).not.toContain('Team order is incomplete')
+    expect(renderedOrder(html)).toEqual(['Titans', 'Trojans', 'Argonauts'])
+  })
+
+  it('reads a team just added as unplaced, which makes a configured order incomplete', () => {
+    reads.teams = [...ORDERED, { id: 'new', name: 'Spartans', bibColour: null, sortOrder: null }]
+    const html = page()
+    expect(html).toContain('Team order is incomplete: Spartans has no position yet')
+    expect(renderedOrder(html)).toEqual(['Titans', 'Trojans', 'Argonauts', 'Spartans'])
+  })
+
+  it('states the status as words a coach reads, for one unplaced team and for several', () => {
+    const one = renderToStaticMarkup(<TeamOrderStatus state="incomplete" unplaced={[TEAMS[0]]} dirty={false} />)
+    expect(one).toContain('Titans has no position yet and is listed')
+    const two = renderToStaticMarkup(<TeamOrderStatus state="incomplete" unplaced={[TEAMS[0], TEAMS[1]]} dirty={false} />)
+    expect(two).toContain('Titans and Trojans have no position yet and are listed')
+    expect(renderToStaticMarkup(<TeamOrderStatus state="unset" unplaced={TEAMS} dirty={false} />)).toContain('Team order is not set')
+    expect(renderToStaticMarkup(<TeamOrderStatus state="configured" unplaced={[]} dirty={false} />)).toContain('Saved club order')
+  })
+
+  it('stops describing the list as alphabetical, or as saved, once the admin has moved something', () => {
+    // The list shows the draft, so a sentence about what is STORED must not
+    // describe what is on screen as alphabetical or as the saved order.
+    const unset = renderToStaticMarkup(<TeamOrderStatus state="unset" unplaced={TEAMS} dirty />)
+    expect(unset).toContain('Team order is not set')
+    expect(unset).toContain('the order you are arranging')
+    expect(unset).not.toContain('listed alphabetically')
+    const incomplete = renderToStaticMarkup(<TeamOrderStatus state="incomplete" unplaced={[TEAMS[0]]} dirty />)
+    expect(incomplete).toContain('Titans has no position yet')
+    expect(incomplete).toContain('the order you are arranging')
+    expect(incomplete).not.toContain('listed after the ordered teams')
+    const configured = renderToStaticMarkup(<TeamOrderStatus state="configured" unplaced={[]} dirty />)
+    expect(configured).toContain('changes not yet stored')
+  })
+
+  it('says what the order is for, strongest first, in the one exported sentence', () => {
+    expect(TEAM_ORDER_COPY).toContain('strongest team first')
+    expect(page()).toContain(TEAM_ORDER_COPY)
+  })
+
+  it('does not claim the order is in use, because nothing consumes it yet', () => {
+    // Present tense would send an admin to Players and groups expecting a
+    // change; the sentence says a later release will use it.
+    expect(TEAM_ORDER_COPY).not.toMatch(/^Used for/)
+    expect(TEAM_ORDER_COPY).toContain('later release')
+    expect(TEAM_ORDER_COPY).toContain('nothing uses it yet')
+  })
+
+  it('carries a polite live region for the move announcements, empty until a move', () => {
+    const html = page()
+    expect(html).toMatch(/<div class="sr-only" aria-live="polite"><\/div>/)
+  })
+
+  it('shows each row its draft position', () => {
+    reads.teams = ORDERED
+    const html = page()
+    expect(html).toContain('aria-label="Team order for Titans: position 1 of 3"')
+    expect(html).toContain('aria-label="Team order for Argonauts: position 3 of 3"')
+    expect((html.match(/class="admin-position"/g) ?? []).length).toBe(3)
+  })
+})
+
+describe('the ordering controls', () => {
+  it('names Move up and Move down for their own team rather than by an arrow', () => {
+    const html = page()
+    for (const t of TEAMS) {
+      expect(html).toContain(`aria-label="Move ${t.name} up"`)
+      expect(html).toContain(`aria-label="Move ${t.name} down"`)
+    }
+    // Icon only, so an accessible name is the only name there is.
+    expect((html.match(/class="icon-btn"[^>]*>/g) ?? []).length).toBeGreaterThanOrEqual(6)
+  })
+
+  it('cannot move the first team further up or the last further down', () => {
+    reads.teams = ORDERED
+    const html = page()
+    expect(button(html, 'Move Titans up')).toContain('disabled')
+    expect(button(html, 'Move Titans down')).not.toContain('disabled')
+    expect(button(html, 'Move Argonauts down')).toContain('disabled')
+    expect(button(html, 'Move Argonauts up')).not.toContain('disabled')
+    expect(button(html, 'Move Trojans up')).not.toContain('disabled')
+    expect(button(html, 'Move Trojans down')).not.toContain('disabled')
+  })
+
+  it('is a plain button, keyboard operable, with no drag handle and no drag attribute anywhere', () => {
+    const html = page()
+    expect(html).not.toMatch(/draggable/)
+    expect(html).not.toMatch(/drag/i)
+    expect(html).toMatch(/<button[^>]*aria-label="Move Titans up"/)
+  })
+
+  it('keeps the name field, the bib select, Rename and Remove exactly as they were', () => {
+    const html = page()
+    for (const t of TEAMS) {
+      expect(html).toContain(`Team name for ${t.name}`)
+      expect(html).toContain(`Default bib colour for ${t.name}`)
+      expect(html).toContain(`aria-label="Rename ${t.name}"`)
+      expect(html).toContain(`aria-label="Remove ${t.name}"`)
+    }
+  })
+})
+
+describe('Save team order is a checkpoint, offered when pressing it would state something', () => {
+  it('is offered for an unset club even though nothing was moved: pressing it accepts the order shown', () => {
+    const html = page()
+    expect(saveButton(html)).not.toContain('disabled')
+  })
+
+  it('is offered for an incomplete club, because saving places every team', () => {
+    reads.teams = [...ORDERED, { id: 'new', name: 'Spartans', bibColour: null, sortOrder: null }]
+    expect(saveButton(page())).not.toContain('disabled')
+  })
+
+  it('is withheld for a configured club whose draft nobody has moved', () => {
+    reads.teams = ORDERED
+    const html = page()
+    expect(saveButton(html)).toContain('disabled')
+    expect(html).not.toContain('Not saved yet')
+  })
+
+  it('writes nothing when the page renders, in any state', () => {
+    page()
+    reads.teams = ORDERED
+    page()
+    reads.teams = [...ORDERED, { id: 'new', name: 'Spartans', bibColour: null, sortOrder: null }]
+    page()
+    expect(writes).toEqual([])
+  })
+
+  it('renders no success or refusal until a save has happened', () => {
+    const html = page()
+    expect(html).not.toContain('Team order saved')
+    expect(html).not.toContain('Could not save the team order')
+  })
+
+  it('freezes every ordering control, Remove and Add team while the order is being written', () => {
+    saveState.isPending = true
+    const html = page()
+    const saving = html.match(/<button[^>]*>(?:(?!<\/button>).)*Saving order…(?:(?!<\/button>).)*<\/button>/s)
+    expect(saving, 'Saving order…').not.toBeNull()
+    expect(saving![0]).toContain('disabled')
+    for (const t of TEAMS) {
+      expect(button(html, `Move ${t.name} up`)).toContain('disabled')
+      expect(button(html, `Move ${t.name} down`)).toContain('disabled')
+      expect(button(html, `Remove ${t.name}`)).toContain('disabled')
+    }
+    const add = html.match(/<button[^>]*>(?:(?!<\/button>).)*Add team(?:(?!<\/button>).)*<\/button>/s)
+    expect(add).not.toBeNull()
+    expect(add![0]).toContain('disabled')
+    expect(html).not.toContain('Not saved yet')
+  })
+
+  it('is withheld while a team is being added, so an order that does not know the new team cannot be sent', () => {
+    insertState.isPending = true
+    const html = page()
+    expect(html).toContain('Adding…')
+    expect(saveButton(html)).toContain('disabled')
+    // The ordering controls themselves stay live: the draft can still be
+    // arranged and the newcomer joins it unplaced when the read lands.
+    expect(button(html, 'Move Titans down')).not.toContain('disabled')
+  })
+
+  it('renders a refused save as an alert in the refusal\'s own words', () => {
+    saveState.isError = true
+    saveState.error = new TeamOrderChanged()
+    const html = page()
+    expect(html).toMatch(/role="alert"/)
+    expect(html).toContain('Could not save the team order.')
+    expect(html).toContain('The list has been refreshed; check it and save again.')
+    // The refusal wrapper is the thing focus goes to.
+    expect(html).toMatch(/<div tabindex="-1" class="admin-note"><div[^>]*role="alert"/)
+  })
+
+  it('writes one sentence per refusal, and says what is stored in each', () => {
+    // Every refusal the function raises happens BEFORE it writes, so each of
+    // these can state that nothing changed. The old wording reported how far
+    // a part written save had got; the RPC cannot leave one, so a sentence
+    // about partial progress would describe an impossible outcome.
+    const changed = saveFailureMessage(new TeamOrderChanged())
+    expect(changed).toBe(`Could not save the team order. ${new TeamOrderChanged().message}`)
+
+    const refused = saveFailureMessage(new TeamOrderRefused('The server refused the request as it was made.'))
+    expect(refused).toContain('The server refused the request as it was made.')
+    expect(refused).toContain('Nothing was changed.')
+    expect(refused).toContain('save again')
+
+    const denied = saveFailureMessage(new TeamOrderNotPermitted())
+    expect(denied).toContain('permission')
+    expect(denied).toContain('refreshed')
+
+    // A transport failure is the one outcome this client cannot determine,
+    // and the sentence says so rather than picking one. It must not claim
+    // nothing changed, and it must not leak the raw error at a coach.
+    const other = saveFailureMessage(new Error('network down'))
+    expect(other).toContain('Could not save the team order.')
+    expect(other).not.toContain('network down')
+    expect(other).toContain('not known whether it reached the server')
+    expect(other).not.toContain('Nothing was changed.')
+    expect(saveFailureMessage(undefined)).toBe(other)
+  })
+})
+

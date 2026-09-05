@@ -71,6 +71,13 @@ import type {
   Team,
   Template,
 } from './data'
+import {
+  TeamOrderChanged,
+  TeamOrderNotPermitted,
+  TeamOrderRefused,
+  teamOrderRequest,
+  type TeamPosition,
+} from './teamOrder'
 import { nextPrimaryTeamId, primaryRoleKey, SHARE_CAPS, sortRoles, youtubeId } from './data'
 import { isActivitySlot } from './activityStructure'
 import type { ActivitySlot } from './activityStructure'
@@ -243,6 +250,7 @@ interface TeamRow {
   name: string
   bib_colour: string | null
   created_at: string
+  sort_order: number | null
 }
 
 interface RoleRow {
@@ -293,7 +301,11 @@ const PROGRAMME_COLS =
 // exactly as fresh as the row it belongs to.
 const SESSION_COLS =
   'id, club_id, coach_id, team_id, name, focus, date, start_time, venue, age_group, status, activities, created_at, intentions, space, source_url, source_label, programme_id, programme_week, live_activity_index, live_activity_started_at, spond_event_id, board_id, rights, venue_id, session_teams(team_id)'
-const TEAM_COLS = 'id, club_id, name, bib_colour, created_at'
+// sort_order rides the ordinary read (COACH-1B) so the Teams screen can show
+// the club's order; the READ ORDER stays alphabetical by name, because that
+// is what every label and filter shows, and the club order is a separate
+// question src/lib/teamOrder.ts answers.
+const TEAM_COLS = 'id, club_id, name, bib_colour, created_at, sort_order'
 // The role and team assignment sets ride the profiles read as embeds, so the
 // Users screen and the owner labels share one query.
 const PROFILE_COLS =
@@ -552,7 +564,7 @@ export function toSession(r: SessionRow): Session {
 }
 
 function toTeam(r: TeamRow): Team {
-  return { id: r.id, name: r.name, bibColour: r.bib_colour ?? null }
+  return { id: r.id, name: r.name, bibColour: r.bib_colour ?? null, sortOrder: r.sort_order ?? null }
 }
 
 function toRole(r: RoleRow): RoleInfo {
@@ -5593,6 +5605,97 @@ export function useSetTeamBibColour() {
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['teams'] }),
+  })
+}
+
+// ---- Team order (teams.manage, COACH-1B) ----------------------------------
+//
+// The club's ordering of its own teams, saved as ONE explicit checkpoint from
+// the Teams admin screen: the positions 1..N in the order the admin can see,
+// sent as ONE call to public.set_team_order (migration 0052, applied to
+// production on 4 September 2026 as hosted 20260904174142 /
+// atomic_team_order).
+//
+// THIS CLIENT WRITES sort_order NOWHERE. The function is the only path, and
+// it is the only path because a whole order written from the browser cannot
+// be a transaction: teams_sort_order_unique is checked per row, so a swap is
+// several statements, and two admins moving DISJOINT rows pass every per row
+// check and leave an order neither submitted. There is deliberately no
+// fallback path, because a fallback is that race with a longer name.
+//
+// The function owns atomicity, the complete set check, the expected snapshot
+// comparison and the serialization. What is left here is the call and the
+// translation of its refusals, and what is left in src/lib/teamOrder.ts is
+// the pure request shape and the wording.
+type TeamOrderResult = { teams: TeamPositionRow[]; changed: number }
+type TeamPositionRow = { id: string; sort_order: number | null }
+const toTeamPosition = (r: TeamPositionRow): TeamPosition => ({ id: r.id, sortOrder: r.sort_order ?? null })
+
+/* What the function's refusals mean, and the ONE place they are read.
+
+   The stale case is matched on the DETAIL token `stale_order`, never on
+   SQLSTATE P0001 alone. P0001 is also every malformed request the function
+   refuses (a wrong isolation level, a prior lock on teams, a multidimensional
+   array, mismatched lengths, a duplicate or foreign id), so a client keying
+   on the code would tell an admin that somebody else saved when the truth is
+   that this client sent something the function would not serve, and would
+   keep saying it for a defect that never resolves. PostgREST puts the
+   DETAIL in `details`, which is what is read here.
+
+   Exported for its own tests: the mapping is the part of this file most
+   likely to rot silently, because both wrong answers still render a plausible
+   sentence. */
+export function teamOrderError(error: { code?: string | null; details?: string | null; message?: string | null } | null): Error {
+  const code = error?.code ?? ''
+  const details = error?.details ?? ''
+  if (code === 'P0001' && details === 'stale_order') return new TeamOrderChanged()
+  if (code === '42501') return new TeamOrderNotPermitted()
+  if (code === 'P0001') {
+    return new TeamOrderRefused('The server refused the request as it was made.')
+  }
+  return new Error(error?.message || 'The team order could not be saved.')
+}
+
+export interface SaveTeamOrderVariables {
+  orderedIds: string[]
+  expected: TeamPosition[]
+}
+
+/* The screen's outcome handling is taken HERE, as the hook's own callbacks,
+   rather than as options to mutate(). TanStack awaits the hook level
+   onSuccess and then the hook level onSettled before it runs the per-call
+   callbacks, and onSettled below returns the invalidation, which resolves
+   only when the teams refetch has landed. A per-call callback therefore runs
+   AFTER the refetch, too late for anything the screen must have in place
+   before that read arrives (the snapshot the read is compared against, the
+   flag that says a read is awaited). The hook level onSuccess and onError
+   run before onSettled, so what is handed in here is in place first. */
+export function useSaveTeamOrder(callbacks?: {
+  onSuccess?: (vars: SaveTeamOrderVariables) => void
+  onError?: (error: Error, vars: SaveTeamOrderVariables) => void
+}) {
+  const qc = useQueryClient()
+  return useMutation<TeamPosition[], Error, SaveTeamOrderVariables>({
+    // ONE call. `expected` is the positions the screen's draft was drawn
+    // from, projected onto the id order by teamOrderRequest because the
+    // function reads the two arrays by ordinality; null survives as a real
+    // expected value meaning the team was unplaced.
+    mutationFn: async ({ orderedIds, expected }) => {
+      const { data, error } = await supabase.rpc('set_team_order', teamOrderRequest(orderedIds, expected))
+      if (error) throw teamOrderError(error)
+      // The function returns the order it stored. It is handed back for the
+      // caller's convenience only: the cache still converges on a fresh
+      // teams read through the invalidation below, so nothing downstream
+      // depends on this being the newest truth.
+      return (((data as TeamOrderResult | null)?.teams ?? []) as TeamPositionRow[]).map(toTeamPosition)
+    },
+    onSuccess: (_data, vars) => callbacks?.onSuccess?.(vars),
+    onError: (error, vars) => callbacks?.onError?.(error, vars),
+    // Settled rather than success: a refusal, and above all a transport
+    // failure whose outcome this client cannot know, is exactly when the
+    // screen must show what is stored rather than what was meant. Returned,
+    // so the mutation settles only once the read has landed.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['teams'] }),
   })
 }
 

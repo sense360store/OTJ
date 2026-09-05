@@ -27,7 +27,7 @@ documents remains design.
 | **COACH-3**, the suggested setup | **Built** in #203 (the pure generator, 21 August 2026) and #204 (the Players and groups screen, 22 August 2026). No migration. |
 | **COACH-4**, preserving the coach's setup when attendance changes | **Built** in #206 (22 August 2026). No migration. |
 | **COACH-10**, one authoring seam | **Built** in #207 (22 August 2026). No migration. |
-| **COACH-1**, the club's team order | **In progress.** The database half, COACH-1A, is migration `0051_team_sort_order` (M1: `teams.sort_order`, the partial unique index and the audit allow list entry), merged as #223 and applied to production on 2 September 2026 (hosted `20260902150212` / `team_sort_order`). It took a second gated migration: a whole order saved from the browser as separate compare and set statements cannot stop two admins moving DISJOINT rows and leaving a valid order neither submitted, so `0052_atomic_team_order` adds the transactional writer `set_team_order`, registered against `20260902150212`, merged as #226 and applied to production on 4 September 2026 (hosted `20260904174142` / `atomic_team_order`). COACH-1B, the reorder affordance on Admin Teams and the first consumer of the column, is open as #225 and still saves from the browser; replacing that save with one call to `set_team_order` is the remaining COACH-1 work. |
+| **COACH-1**, the club's team order | **Built.** It took two gated migrations. COACH-1A, `0051_team_sort_order` (M1: `teams.sort_order`, the partial unique index and the audit allow list entry), merged as #223 and applied on 2 September 2026 (hosted `20260902150212` / `team_sort_order`). Then `0052_atomic_team_order`, merged as #226 and applied on 4 September 2026 (hosted `20260904174142` / `atomic_team_order`), which adds the transactional writer `set_team_order`: a whole order written from the browser is several statements, and two admins moving DISJOINT rows could leave a valid order neither submitted. COACH-1B, the frontend half, is the Teams admin screen: it lists the club's teams in club order, moves them with Move up and Move down, says whether the order is not set, incomplete or saved, and saves the whole arrangement through ONE `set_team_order` call. `src/lib/teamOrder.ts` holds the pure rules and the screen is the one consumer. Every label stays alphabetical, and the grouping suggestion is still handed no order: wiring the two together is a later, separate decision. |
 | Everything else | Not built. |
 
 **COACH-2A's one operational follow-up has run, and no stored snapshot needs
@@ -219,12 +219,13 @@ on 23 August, so the hosted head is now `20260823065041` / `bulk_delete_players`
    Built: #206.
 4. ~~**COACH-10**, the authoring seam.~~ Built: #207.
 
-**COACH-1** (`teams.sort_order`) is in progress and took a second gated
-migration: COACH-1A, migration `0051_team_sort_order`, merged as #223 and
-applied on 2 September 2026, and COACH-1B (#225) is held for
-`0052_atomic_team_order`, which adds the transactional writer the client's
-multi statement save cannot be. That is one more gated migration than the plan
-carried, recorded here rather than absorbed. Then **COACH-5**
+**COACH-1** (`teams.sort_order`) is built and took two gated migrations rather
+than the one the plan carried: `0051_team_sort_order`, merged as #223 and
+applied on 2 September 2026, and `0052_atomic_team_order`, merged as #226 and
+applied on 4 September 2026, which adds the transactional writer the client's
+multi statement save could not be. COACH-1B, the Teams screen's ordering
+affordance, calls it. The extra migration is recorded here rather than
+absorbed. Then **COACH-5**
 (`venue_layouts`), **COACH-8** (the game bib) and
 **COACH-12** (`drills.variant_of`), each authored and registered against the
 ledger as it stands at its own review.

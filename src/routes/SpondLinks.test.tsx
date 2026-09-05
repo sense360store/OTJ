@@ -93,8 +93,8 @@ const sectionProps = {
 
 describe('TeamChipsView', () => {
   const teams: Team[] = [
-    { id: 't1', name: 'Titans', bibColour: 'red' },
-    { id: 't2', name: 'Trojans', bibColour: null },
+    { id: 't1', name: 'Titans', bibColour: 'red', sortOrder: null },
+    { id: 't2', name: 'Trojans', bibColour: null, sortOrder: null },
   ]
 
   it('shows progress per team so a manager can see where to work', () => {

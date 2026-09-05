@@ -4,11 +4,11 @@ Status: proposal, reconciled 18 August 2026 against `main` at `afe790d`;
 delivery status re-verified 2 September 2026 against `main` at `3cb20f9`.
 **Five slices are built** (COACH-2A, COACH-2B, COACH-3, COACH-4 and COACH-10,
 each recorded under its own heading below with its pull request), **COACH-1 is
-in progress** and has taken TWO gated migrations rather than the one this plan
-carried (COACH-1A, migration `0051_team_sort_order`, merged as #223 and applied
-on 2 September 2026; COACH-1B open as #225 and held for
-`0052_atomic_team_order`, registered and awaiting its apply), and everything
-else remains design. A settled design is not
+built** and took TWO gated migrations rather than the one this plan carried
+(COACH-1A, migration `0051_team_sort_order`, merged as #223 and applied on
+2 September 2026; `0052_atomic_team_order`, merged as #226 and applied on
+4 September 2026; COACH-1B, the Teams screen's ordering affordance, in its own
+PR), and everything else remains design. A settled design is not
 delivered work.
 
 The order was re-derived from scratch after coach discovery, then corrected once
@@ -83,14 +83,14 @@ human review that is not auto-merged.
 
 ### COACH-1: the club's team order
 
-**Status.** In progress. The database half, COACH-1A, is migration
+**Status.** Built. The database half, COACH-1A, is migration
 `0051_team_sort_order`, merged as #223 and applied to production on 2 September
 2026 (hosted `20260902150212` / `team_sort_order`). R1 in
 `08-open-questions.md` is decided as its recommended default: `sort_order`
 joins the `audit_teams()` allow list.
 
-The reorder affordance, COACH-1B, is open as #225 and took a SECOND gated
-migration this plan did not anticipate. A whole club order written from the
+The reorder affordance, COACH-1B, took a SECOND gated migration this plan
+did not anticipate. A whole club order written from the
 browser is several PostgREST statements, each conditioned on the value the
 screen last read, and two admins who move DISJOINT rows never collide: from
 `A=1 B=2 C=3 D=4`, one swaps A and B while the other swaps C and D, every
@@ -103,13 +103,19 @@ and SHARE ROW EXCLUSIVE on `teams`, refuses a stale save before writing, and
 otherwise clears and places the whole order in one transaction. It was
 registered against `20260902150212`, merged as #226 and applied to
 production on 4 September 2026 (hosted `20260904174142` /
-`atomic_team_order`); #225 then replaces its client save with one call to
-it, which is the remaining COACH-1 work.
+`atomic_team_order`). COACH-1B saves through ONE call to it: the Teams admin
+screen lists the teams in club order, moves them with Move up and Move down
+(no drag gesture), names the order as not set, incomplete or saved, and sends
+the whole arrangement in one request. `src/lib/teamOrder.ts` holds the pure
+ordering, draft and snapshot rules, `src/lib/queries.ts` owns the call and its
+error translation, and `src/lib/teamOrder.invariant.test.ts` pins that the
+Teams screen is the one consumer and that no client writes `sort_order`
+directly. The grouping suggestion is still handed no order, by decision.
 
-**What COACH-1B must match, because getting it wrong is silent.** A stale save
+**What COACH-1B matches, because getting it wrong is silent.** A stale save
 raises `P0001` carrying the DETAIL token `stale_order`, which PostgREST returns
 as the error body's `details`. **Match the token, not the code**: `P0001` also
-covers every malformed request, so a client that keys on the code alone will
+covers every malformed request, so a client that keyed on the code alone would
 show "another admin saved a different order" for its own bugs and the reverse.
 This passage said `40001` while that was the contract, and it is worth saying
 why it is not, because `40001` is what an experienced reader would expect.
@@ -830,13 +836,15 @@ ledger as it stands then.**
 
 ### The migration slices, in dependency order
 
-5. **COACH-1**, `teams.sort_order`. **In progress**: COACH-1A, migration
-   `0051_team_sort_order`, merged as #223 and applied on 2 September 2026, and
-   COACH-1B is open as #225 behind a second gated migration,
-   `0052_atomic_team_order`, which adds the transactional writer the client
-   save cannot be. One nullable column on a five-row table plus one function,
-   and still the smallest first migration for this programme. It
-   upgrades COACH-3 from "keeps teams whole" to "combines adjacent bands".
+5. **COACH-1**, `teams.sort_order`. **Built**: COACH-1A, migration
+   `0051_team_sort_order`, merged as #223 and applied on 2 September 2026;
+   `0052_atomic_team_order`, the transactional writer the client save could not
+   be, merged as #226 and applied on 4 September 2026; and COACH-1B, the
+   ordering affordance, in its own PR. One nullable column on a five-row table
+   plus one function, and still the smallest first migration for this
+   programme. Whether it upgrades COACH-3 from "keeps teams whole" to "combines
+   adjacent bands" is a later decision: nothing consumes the order yet, and the
+   register still hands the grouping suggestion no order.
 6. **COACH-5**, the `venue_layouts` table. The largest single review in the
    programme: a new table, a new shape boundary, RLS mirroring `venues`, and the
    season and age group resolution.
