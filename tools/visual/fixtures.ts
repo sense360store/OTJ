@@ -577,20 +577,25 @@ export const HOME_SESSIONS_FOR = (s: HarnessState): Session[] => {
         ...HOME_DEFAULT,
       ]
     case 'live':
-      // Started an hour ago and being driven now by the other coach, so the
-      // signed in coach is offered watching rather than driving.
+      // The signed in coach's own session, started an hour ago and being
+      // driven now. It has to be THEIRS: the hero leads with the coach's own
+      // next training before the club's, so another coach's live session
+      // sits in the week list while tomorrow's own session is the hero, and
+      // "Live now" never renders. That is the product's rule and the first
+      // version of this fixture photographed its absence under a name
+      // claiming it. Live is offered with the eye glyph while a session is
+      // running, driver or not.
       return [
         session({
           id: 's-live',
-          name: 'Trojans Tuesday',
-          coachId: 'coach-them',
+          name: 'Titans Tuesday',
+          coachId: 'coach-me',
           date: inDays(0),
           time: clock(1),
-          teamIds: ['trojans'],
           liveActivityIndex: 1,
           liveActivityStartedAt: new Date(Date.now() - 20 * 60000).toISOString(),
         }),
-        ...HOME_DEFAULT,
+        ...HOME_DEFAULT.slice(1),
       ]
     case 'longnames':
       return [

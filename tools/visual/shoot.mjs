@@ -591,7 +591,8 @@ const REACHED_STATE = {
     page.evaluate(
       () =>
         (document.querySelector('.hero .eyebrow')?.textContent ?? '').includes('Live now') &&
-        (document.querySelector('.hero h2')?.textContent ?? '') === 'Trojans Tuesday',
+        (document.querySelector('.hero h2')?.textContent ?? '') === 'Titans Tuesday' &&
+        !!document.querySelector('.hero-acts .btn:nth-child(2) svg'),
     ),
   nocontent: '.empty:has-text("Nothing here yet")',
   noteam: '.note-info:has-text("No team set yet")',

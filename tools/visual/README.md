@@ -387,7 +387,11 @@ sessions yet card. `nothingscheduled` is a coach whose sessions are all past.
 `quietweek` puts the next session beyond the seven day window, so the hero
 counts down while the week list says the week is empty. `endedtoday` is a
 night that finished earlier today, still listed and marked with the ended
-Badge and never the hero. `live` is a session another coach is driving now.
+Badge and never the hero. `live` is the signed in coach's own session being
+driven now, and it has to be their own: the hero leads with the coach's own
+next training before the club's, so another coach's live session sits in the
+week list under tomorrow's own hero and "Live now" never renders; the first
+version of that fixture photographed its absence under a name claiming it.
 `nocontent` empties What's new. `noteam` is a parent the club has not placed,
 read by the team scope alone. `longnames` is reused and means what it means
 everywhere: a session name, a focus line and a venue at the length a club
