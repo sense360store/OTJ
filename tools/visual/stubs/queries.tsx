@@ -18,6 +18,11 @@ import {
   ACTIVITY_PROFILES_FOR,
   CURRENT_SEASON,
   DRILLS,
+  HOME_DRILLS,
+  HOME_PROGRAMME,
+  HOME_SESSIONS_FOR,
+  HOME_TEMPLATE,
+  HOME_VENUES_FOR,
   MEDIA,
   OVER_LIMIT_PLAYERS,
   PAST_SEASON,
@@ -91,17 +96,35 @@ const byId = <T extends { id: string }>(rows: T[]): Record<string, T> =>
   Object.fromEntries(rows.map((r) => [r.id, r]))
 
 export const useMyCapabilities = () => ({ caps: fixtures.caps, isPending: false })
-export const useSessions = () => query(SESSIONS)
+
+/* ---- Home (VISUAL-02) ----------------------------------------------
+   The two screens behind `/` read the sessions, drills and templates every
+   other harness screen reads, so their states are answered ONLY while Home
+   is the mounted screen and every other screen keeps reading exactly what
+   it always read. That is the same branch `useProfiles` takes for the Users
+   screen, for the same reason: widening a shared fixture moves every shot
+   that already reads it. */
+const ON_HOME = harnessScreen === 'home'
+const homeRows = <T,>(rows: T) => (ON_HOME ? rows : undefined)
+
+export const useSessions = () => {
+  if (ON_HOME && fixtures.state === 'homeloading') return pendingQuery<typeof SESSIONS>()
+  if (ON_HOME && fixtures.state === 'homeerror') return failedQuery<typeof SESSIONS>()
+  return query(homeRows(HOME_SESSIONS_FOR(fixtures.state)) ?? SESSIONS)
+}
 export const useUpsertSession = mutation
 export const useDeleteSession = mutation
 export const useSetLiveActivity = mutation
 export const useLiveSessionSync = () => {}
-export const useDrills = () => query(DRILLS)
-export const useDrillMap = () => byId(DRILLS)
+const drillRows = () => (ON_HOME ? (fixtures.state === 'nocontent' ? [] : HOME_DRILLS) : DRILLS)
+export const useDrills = () => query(drillRows())
+export const useDrillMap = () => byId(drillRows())
 export const useMedia = () => query(MEDIA)
 export const useMediaMap = () => byId(MEDIA)
-export const useTemplates = () => query(TEMPLATES)
-export const useProgrammes = () => query([])
+export const useTemplates = () =>
+  query(homeRows(fixtures.state === 'nocontent' ? [] : [HOME_TEMPLATE]) ?? TEMPLATES)
+export const useProgrammes = () => query(homeRows([HOME_PROGRAMME]) ?? [])
+export const useProgrammeMap = () => byId(homeRows([HOME_PROGRAMME]) ?? [])
 // `longnames` widens the club by two long named teams, which is the entity
 // label the Activity feed can render at any length. It is a state rather than
 // a shared fixture so no other screen's shot moves, and the map answers from
@@ -122,9 +145,19 @@ export const useTeams = () => {
   return query(teams, { dataUpdatedAt })
 }
 export const useTeamMap = () => byId(useAdminTeams())
-export const useMyTeams = () => query({ teamIds: TEAMS.map((t) => t.id), allTeams: true })
+// `noteam` is the parent the club has not placed yet, and it is read only
+// on Home: Sessions scopes its schedule through this read too and would
+// otherwise wear the same note in a shot named for nothing.
+export const useMyTeams = () =>
+  query(
+    ON_HOME && fixtures.state === 'noteam'
+      ? { teamIds: [] as string[], allTeams: false }
+      : { teamIds: TEAMS.map((t) => t.id), allTeams: true },
+  )
 export const useVenues = () => query([])
-export const useVenueMap = () => ({})
+// The venue is answered on Home only, so Sessions' venue pill, which reads
+// the same map, keeps rendering exactly what it always rendered: nothing.
+export const useVenueMap = () => homeRows(HOME_VENUES_FOR(fixtures.state)) ?? {}
 /* The members a name is resolved through. Its ids are the FEEDBACK fixtures'
    own; `coach-them`, which the SESSIONS fixtures use, is deliberately absent,
    so Home and Sessions still fall back to "Another coach" and no shot either

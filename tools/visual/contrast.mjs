@@ -200,7 +200,15 @@ const STATES_FOR = (screen) =>
               // a new ground. Everything a press produces is its own run
               // below, for the same reason Account's and Login's are.
               ['default', 'loading', 'error', 'empty', 'longnames']
-            : ['default']
+            : screen === 'home'
+              ? // The coach home's states run against `coach` (the first
+                // variant), so the parent only states are measured through
+                // the separate run below rather than skipped by the rule
+                // above. `endedtoday` is where the Badge lands on a row, and
+                // `live` where the eyebrow changes; the rest are the empty
+                // hero's own copy and the two read states.
+                ['default', 'homeloading', 'homeerror', 'nosessions', 'nothingscheduled', 'quietweek', 'endedtoday', 'live', 'nocontent', 'longnames']
+              : ['default']
 
 const failed = [], exempt = [], frozen = []
 const seen = new Set()
@@ -313,6 +321,37 @@ for (const screen of SCREENS) {
         await page.close()
        }
       }
+    }
+  }
+}
+
+/* ---- VISUAL-02: the parent dashboard's own states ----------------------
+   The state loop above runs a screen's states against its FIRST capability
+   variant, which for Home is the coach. Three states render something only
+   the parent dashboard draws: the info Note above club wide content, the
+   No sessions yet card, and the ended Badge on a parent row. Each is its
+   own ground, so each is measured on the dashboard rather than assumed
+   from the coach home's run. */
+for (const state of ['noteam', 'nosessions', 'endedtoday', 'longnames']) {
+  for (const theme of ['light', 'dark']) {
+    for (const w of [390, 1280]) {
+      const page = await context.newPage()
+      await page.setViewportSize({ width: w, height: 1400 })
+      await page.goto(`${BASE}/?${new URLSearchParams({ screen: 'home', caps: 'parent', state, theme })}`, {
+        waitUntil: 'domcontentloaded',
+      })
+      await page.evaluate(() => document.fonts.ready)
+      await page.waitForTimeout(400)
+      const rows = await page.evaluate('(' + SWEEP + ')()')
+      for (const r of rows) {
+        if (r.ratio >= r.need) continue
+        const key = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        const row = { ...r, where: `home/parent/${state}/${theme}/${w}w` }
+        ;(r.disabled ? exempt : r.frozen ? frozen : failed).push(row)
+      }
+      await page.close()
     }
   }
 }

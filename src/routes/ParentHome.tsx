@@ -10,6 +10,12 @@
 // the team scope and the session and drill data and feeds it in. The split
 // keeps the dashboard testable with the static renderer, the same style as
 // the rest of the suite.
+//
+// VISUAL-02 brought it onto the shared system: PageHeader for the heading,
+// Card for the five sections, Note for the no team notice, Badge for the one
+// status a row carries, and the type and spacing scales for every inline
+// size and step. Which sessions are in scope, which is last, what Practice
+// at home draws from and where a tap goes are exactly what they were.
 import type { ReactNode } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
@@ -26,11 +32,12 @@ import { useSessions } from '../context/SessionsContext'
 import { isSampleMedia, memberTeamIds } from '../lib/data'
 import type { Drill, Session } from '../lib/data'
 import { sessionTeamsLabel, sessionVisibleToTeams } from '../lib/sessionTeams'
-import { isSessionEndedToday, isSessionOperational, isSessionPast } from '../lib/sessionLifecycle'
+import { ENDED_TODAY_LABEL, isSessionEndedToday, isSessionOperational, isSessionPast } from '../lib/sessionLifecycle'
 import { venueNameFor } from '../lib/venues'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
 import { DrillCard, ErrorNote, fmtDate, Loading } from '../components/ui'
+import { Badge, Card, Note, PageHeader } from '../components/primitives'
 import './ParentHome.css'
 
 // ---- Presentational shapes ------------------------------------------------
@@ -77,8 +84,9 @@ export interface PracticeSuggestion {
 
 // ---- Section primitives ---------------------------------------------------
 
-// A card section in the dashboard, styled like the Account screen's section
-// cards: a titled card with an optional one line sub.
+// A card section in the dashboard: the shared Card, a level two heading (the
+// page title is the h1, so a section directly under it is an h2 rather than
+// the h3 it used to be) and an optional one line sub.
 function Section({
   icon: Ico,
   title,
@@ -91,21 +99,21 @@ function Section({
   children: ReactNode
 }) {
   return (
-    <section className="card parent-section">
-      <div className="section-title" style={{ margin: 0 }}>
-        <Ico />
-        <h3>{title}</h3>
+    <Card className="parent-section">
+      <div className="section-title">
+        <Ico aria-hidden="true" />
+        <h2>{title}</h2>
       </div>
       {sub && <p className="parent-section-sub muted">{sub}</p>}
       {children}
-    </section>
+    </Card>
   )
 }
 
 function IntentionPills({ intentions }: { intentions: string[] }) {
   if (intentions.length === 0) return null
   return (
-    <div className="row wrap" style={{ gap: 6 }}>
+    <div className="row wrap intention-pills">
       {intentions.map((x, i) => (
         <span className="pill" key={i}>
           {x}
@@ -117,19 +125,18 @@ function IntentionPills({ intentions }: { intentions: string[] }) {
 
 // The gentle note a parent with no team assignment sees above club wide
 // content. The fix is an admin action, so the note points there. Shared with
-// the Sessions schedule, which scopes to the same member_teams.
+// the Sessions schedule, which scopes to the same member_teams, so that
+// screen's parent variant wears the same Note without its own route having
+// been adopted: one component, one look.
 export function NoTeamNote() {
   return (
-    <div className="parent-note">
-      <Icon.flag />
-      <div>
-        <b>No team set yet</b>
-        <p>
-          Ask a club admin to add you to your child's team and this page will focus on their sessions. For now, here is
-          what is happening across the club.
-        </p>
-      </div>
-    </div>
+    <Note tone="info" icon={Icon.flag} className="parent-note">
+      <b className="parent-note-title">No team set yet</b>
+      <p>
+        Ask a club admin to add you to your child's team and this page will focus on their sessions. For now, here is
+        what is happening across the club.
+      </p>
+    </Note>
   )
 }
 
@@ -166,11 +173,11 @@ function ThisWeekSection({ sessions }: { sessions: ParentSessionView[] }) {
                   <Icon.flag />
                   {s.teamLabel}
                 </span>
-                {s.ended && <span className="pill">Ended earlier today</span>}
+                {s.ended && <Badge>{ENDED_TODAY_LABEL}</Badge>}
               </span>
               {s.focus && <span className="psn-focus">{s.focus}</span>}
               {s.intentions.length > 0 && (
-                <span style={{ marginTop: 6 }}>
+                <span className="psn-intentions">
                   <IntentionPills intentions={s.intentions} />
                 </span>
               )}
@@ -199,7 +206,7 @@ function LastSessionSection({
     >
       {view.focus && <div className="parent-focus">{view.focus}</div>}
       {view.intentions.length > 0 && (
-        <div style={{ marginBottom: 14 }}>
+        <div className="parent-intentions">
           <IntentionPills intentions={view.intentions} />
         </div>
       )}
@@ -210,9 +217,7 @@ function LastSessionSection({
           ))}
         </div>
       ) : (
-        <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
-          This session's drills are not in the library.
-        </p>
+        <p className="muted parent-muted">This session's drills are not in the library.</p>
       )}
     </Section>
   )
@@ -236,15 +241,22 @@ export function PracticeAtHome({
     >
       <div className="practice-list">
         {suggestions.map((s, i) => (
-          <button className="practice-row" key={i} onClick={() => onOpenDrill(s.drillId)}>
-            <span className="practice-ico">{s.kind === 'video' ? <Icon.play /> : <Icon.star />}</span>
+          <button
+            type="button"
+            className="card card-tinted card-interactive practice-row"
+            key={i}
+            onClick={() => onOpenDrill(s.drillId)}
+          >
+            <span className="practice-ico" aria-hidden="true">
+              {s.kind === 'video' ? <Icon.play /> : <Icon.star />}
+            </span>
             <span className="practice-body">
               <span className="practice-text">{s.text}</span>
               <span className="practice-from">
                 {s.kind === 'video' ? 'Watch together' : 'Make it easier'} · {s.drillTitle}
               </span>
             </span>
-            <Icon.chevR style={{ width: 16, height: 16, color: 'var(--slate-2)', flex: '0 0 16px' }} />
+            <Icon.chevR className="practice-chev" aria-hidden="true" />
           </button>
         ))}
       </div>
@@ -262,9 +274,7 @@ function ProgrammeSection({ ctx }: { ctx: ParentProgrammeContext }) {
       {ctx.intentions.length > 0 ? (
         <IntentionPills intentions={ctx.intentions} />
       ) : (
-        <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
-          Part of the {ctx.name} programme.
-        </p>
+        <p className="muted parent-muted">Part of the {ctx.name} programme.</p>
       )}
     </Section>
   )
@@ -285,7 +295,7 @@ function PositiveSupport() {
       <ul className="touchline">
         {TOUCHLINE_VALUES.map((v) => (
           <li key={v}>
-            <span className="touchline-dot" />
+            <span className="touchline-dot" aria-hidden="true" />
             <span>{v}</span>
           </li>
         ))}
@@ -324,13 +334,11 @@ export function ParentDashboard({
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <div className="eyebrow">{todayLine}</div>
-          <h1 style={{ marginTop: 4 }}>Welcome{firstName ? `, ${firstName}` : ''}</h1>
-          <div className="sub">How the team is developing, and a few ways to support it at home.</div>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={todayLine}
+        title={`Welcome${firstName ? `, ${firstName}` : ''}`}
+        sub="How the team is developing, and a few ways to support it at home."
+      />
 
       {noTeam && <NoTeamNote />}
 
@@ -343,7 +351,7 @@ export function ParentDashboard({
         </>
       ) : (
         <Section icon={Icon.calendar} title="No sessions yet">
-          <p className="muted" style={{ margin: 0, fontSize: 14 }}>
+          <p className="muted parent-muted">
             When a coach plans the team's next training night it appears here, with what they are working on and how you
             can support it at home.
           </p>

@@ -12,6 +12,7 @@ import type {
   MediaItem,
   Member,
   PlayerHistoryEntry,
+  Programme,
   RegisteredPlayer,
   RoleCapability,
   RoleInfo,
@@ -319,6 +320,40 @@ export type HarnessState =
   // club that has never placed a team, and one that has placed two of five.
   | 'orderunset'
   | 'orderincomplete'
+  /* ---- Home (VISUAL-02) -------------------------------------------------
+     The two screens behind `/`. Their reads are the sessions, drills and
+     templates every other harness screen reads too, so the states are NAMED
+     for Home and the stub answers them only while Home is the mounted
+     screen: making `loading` hold the sessions read would move Sessions,
+     Players and the admin screens. `longnames` is reused, because it means
+     here what it means everywhere: the strings a club chooses, at the length
+     a club would really make them (a session name, a focus line, a venue and
+     the long team name the other screens already carry). */
+  // The sessions read has not answered, and has failed. Both are the page
+  // level gate on either home.
+  | 'homeloading'
+  | 'homeerror'
+  // A club with no sessions at all: the welcome hero for a coach with its
+  // three first steps, and the honest No sessions yet card for a parent.
+  | 'nosessions'
+  // A coach whose sessions are all in the past: the Nothing scheduled yet
+  // hero, with no first steps because they are not new.
+  | 'nothingscheduled'
+  // The next session is beyond the seven day window: the hero counts down to
+  // it while the week list says the week is empty.
+  | 'quietweek'
+  // A session finished earlier today: still in the week list, marked with the
+  // ended Badge, and never the hero.
+  | 'endedtoday'
+  // A session being driven right now: Live now in the eyebrow and an eye
+  // rather than a play glyph on the Live action, because a coach who is not
+  // driving it can only watch.
+  | 'live'
+  // No drills and no templates: the What's new empty state.
+  | 'nocontent'
+  // A parent the club has not put on a team yet: the info Note above club
+  // wide content. Read by the team scope, so it moves nothing for a coach.
+  | 'noteam'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -435,6 +470,147 @@ export const DRILLS: Drill[] = [
 
 export const MEDIA: MediaItem[] = []
 export const TEMPLATES: Template[] = []
+
+/* ---- Home (VISUAL-02) ----------------------------------------------
+   What the two screens behind `/` read, per state. Every other harness
+   screen keeps reading SESSIONS, DRILLS and TEMPLATES exactly as above; the
+   stub answers from these only while Home is the mounted screen, so no
+   shot of any other surface moves. */
+
+// The one venue the hero and the parent rows can show. Sessions, which also
+// renders a venue pill, still reads an empty venue map, so its shots are
+// unchanged; the venue id below is on a Home only copy of the row.
+export const HOME_VENUE = { id: 'v1', name: 'Southdale Fields' }
+export const HOME_LONG_VENUE = { id: 'v-long', name: 'Ossett Town Juniors Community Sports Hub, Southdale Road' }
+
+export const HOME_PROGRAMME: Programme = {
+  id: 'p1',
+  name: 'Autumn possession block',
+  focus: 'Keeping the ball under pressure',
+  summary: '',
+  intentions: ['Keep the ball', 'Play forward when it is on'],
+  weeks: 6,
+  pdfMediaId: null,
+  sourceUrl: '',
+  sourceLabel: '',
+  rights: 'club',
+} as unknown as Programme
+
+// A template beside the drills in What's new, newest first, so the template
+// card renders in the default coach shot.
+export const HOME_TEMPLATE: Template = {
+  id: 't1',
+  name: 'Receiving under pressure',
+  author: 'Club',
+  focus: 'Receiving on the half turn and playing forward at the first chance.',
+  activities: [
+    { phase: 'Warm-Up', drillId: 'd2', duration: 10 },
+    { phase: 'Skill', drillId: 'd1', duration: 20 },
+  ],
+  intentions: [],
+  programme: '',
+  week: 2,
+  createdAt: '2026-08-20T10:00:00Z',
+} as unknown as Template
+
+// The drills with a make it easier adaptation each, which is what Practice at
+// home draws from. The Library is not a harness screen, so widening the two
+// shared rows here moves nothing else.
+export const HOME_DRILLS: Drill[] = DRILLS.map((d) => ({
+  ...d,
+  easier: d.id === 'd1' ? ['Make the area bigger so there is more time on the ball.'] : ['Play two touch rather than one.'],
+}))
+
+export const HOME_LONG_SESSION_NAME =
+  'Titans Tuesday evening technical session with the Trojans joining for the second half'
+export const HOME_LONG_FOCUS = 'Receiving on the half turn under pressure, then playing forward at the first chance'
+
+// Last Tuesday, owned by the signed in coach, on a team no admin entry
+// counts, with the programme and the drills the parent dashboard resolves
+// its Last session and Practice at home from.
+const HOME_PAST: Session = session({
+  id: 's-past',
+  name: 'Gladiators last week',
+  coachId: 'coach-me',
+  date: inDays(-6),
+  teamIds: ['gladiators'],
+  programmeId: 'p1',
+  programmeWeek: 2,
+  intentions: ['Scan before the ball arrives', 'Receive on the back foot'],
+  activities: [
+    { phase: 'Warm-Up', drillId: 'd2', duration: 10 },
+    { phase: 'Skill', drillId: 'd1', duration: 20 },
+  ],
+})
+
+// The default Home club: the shared four, the first of them at the venue,
+// and the past night behind them.
+const HOME_DEFAULT: Session[] = [{ ...SESSIONS[0], venueId: HOME_VENUE.id }, ...SESSIONS.slice(1), HOME_PAST]
+
+const clock = (hoursAgo: number): string => {
+  const d = new Date(Date.now() - hoursAgo * 3600000)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+export const HOME_SESSIONS_FOR = (s: HarnessState): Session[] => {
+  switch (s) {
+    case 'nosessions':
+      return []
+    case 'nothingscheduled':
+      return [HOME_PAST]
+    case 'quietweek':
+      return [session({ id: 's-far', name: 'Titans in ten days', coachId: 'coach-me', date: inDays(10) }), HOME_PAST]
+    case 'endedtoday':
+      // Started at one minute past midnight for ten minutes, so it has ended
+      // whenever this is opened after ten past midnight; the rest of the
+      // week follows it.
+      return [
+        session({
+          id: 's-ended',
+          name: 'Gladiators early session',
+          coachId: 'coach-me',
+          date: inDays(0),
+          time: '00:01',
+          teamIds: ['gladiators'],
+          activities: [{ phase: 'Skill', drillId: 'd1', duration: 10 }],
+        }),
+        ...HOME_DEFAULT,
+      ]
+    case 'live':
+      // Started an hour ago and being driven now by the other coach, so the
+      // signed in coach is offered watching rather than driving.
+      return [
+        session({
+          id: 's-live',
+          name: 'Trojans Tuesday',
+          coachId: 'coach-them',
+          date: inDays(0),
+          time: clock(1),
+          teamIds: ['trojans'],
+          liveActivityIndex: 1,
+          liveActivityStartedAt: new Date(Date.now() - 20 * 60000).toISOString(),
+        }),
+        ...HOME_DEFAULT,
+      ]
+    case 'longnames':
+      return [
+        {
+          ...SESSIONS[0],
+          name: HOME_LONG_SESSION_NAME,
+          focus: HOME_LONG_FOCUS,
+          venueId: HOME_LONG_VENUE.id,
+          teamIds: ['team-long', 'team-unbroken'],
+        },
+        ...SESSIONS.slice(1),
+        HOME_PAST,
+      ]
+    default:
+      return HOME_DEFAULT
+  }
+}
+
+export const HOME_VENUES_FOR = (s: HarnessState): Record<string, { id: string; name: string }> =>
+  s === 'longnames' ? { [HOME_LONG_VENUE.id]: HOME_LONG_VENUE } : { [HOME_VENUE.id]: HOME_VENUE }
 
 /* ---- Registered players ------------------------------------------
    Two seasons, so the archived and read only variant is reached by
