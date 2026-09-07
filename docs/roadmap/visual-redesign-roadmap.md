@@ -938,6 +938,15 @@ Three things worth recording:
   is running; Home's hero says Live now. Adding a Badge would be a new
   claim on the screen rather than a restyle of one it makes, so it is
   recorded here rather than added under a presentation slice.
+- **A parent on every team is told to tap a chip they are not shown.** The
+  empty schedule's parent sentence is "Nothing scheduled for your team. Tap
+  All club to see the whole club." whenever the parent scope is the team,
+  and the My team and All club chips render only for a parent on SOME of
+  the club's teams; a parent on every team, which is the harness default,
+  meets the sentence with no chip to tap. Found by the state matrix. It is
+  copy that follows a scope rule rather than presentation, so it is
+  recorded for the next Sessions behaviour slice: the fix is to condition
+  the second sentence on the toggle being offered.
 
 The harness: Sessions shares Home's schedule fixtures and most of its state
 names, each proved by what Sessions renders, plus `sessionsloading`,

@@ -655,12 +655,15 @@ const REACHED_STATE = {
   nosessions: async (page, s) =>
     s.screen === 'sessions'
       ? // Sessions' own empty: the Empty primitive, telling a coach to plan
-        // a first session and a parent that the club calendar is empty.
+        // a first session. The default parent is on every team, so their
+        // sentence is the team scoped one; that it names an All club chip
+        // the all teams parent is never shown is a copy defect recorded in
+        // the roadmap, and the proof pins the sentence the screen renders.
         page.evaluate(
           (parent) =>
             (document.querySelector('.empty h3')?.textContent ?? '') === 'No sessions here yet' &&
             (document.querySelector('.empty p')?.textContent ?? '').includes(
-              parent ? 'Nothing on the club calendar yet.' : 'Plan your first session',
+              parent ? 'Nothing scheduled for your team' : 'Plan your first session',
             ) &&
             !document.querySelector('.session-card'),
           s.caps === 'parent',

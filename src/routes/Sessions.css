@@ -9,10 +9,19 @@
 }
 /* The team filter is a control in a row of chips, not a form field, so it
    takes its own width rather than the field's full one. Composition, which
-   1.6 says belongs to the screen. */
+   1.6 says belongs to the screen. A select's natural width is its longest
+   option, and a team name a club typed at length set the row 43px past a
+   360 viewport, so both the field and its control are capped at the row:
+   the native control ellipsises the option text inside it. Measured in the
+   browser under the long team names. */
+.sessions-filters .sessions-team {
+  min-width: 0;
+  max-width: 100%;
+}
 .sessions-filters .sessions-team select {
   width: auto;
   min-width: 160px;
+  max-width: 100%;
 }
 
 /* min(330px, 100%) rather than 330px alone: a grid track's minimum is a hard

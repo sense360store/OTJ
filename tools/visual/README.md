@@ -427,7 +427,8 @@ state.
 It reads the same sessions, teams and venues Home reads, so it answers from
 the same schedule fixtures and most of the same state names, each proved by
 what SESSIONS renders for it: `nosessions` is the Empty primitive telling a
-coach to plan a first session (a parent that the club calendar is empty);
+coach to plan a first session (and a parent, who is on every team by
+default, that nothing is scheduled for their team);
 `nothingscheduled` is a club whose every session is past, so Upcoming is
 empty and the note offers Past rather than claiming the club has never
 trained; `endedtoday` is the ended Badge on a card that is still listed
