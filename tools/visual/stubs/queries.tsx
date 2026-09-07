@@ -183,6 +183,22 @@ const countedWrite = (name: 'insertVenue' | 'renameVenue' | 'deleteVenue' | 'sav
         opts?.onError?.(new Error('the write was refused'))
         return
       }
+      // A layout save answers with the row as the product's own does, so a
+      // screen comparing the readback with its draft sees them agree.
+      if (name === 'saveVenueLayout') {
+        const v = vars as { id?: string; venueId: string; seasonId: string; ageGroup: string; shape: { kind: 'stations' | 'games'; slots: number }; zones: VenueLayout['zones'] }
+        const row: VenueLayout = {
+          id: v.id ?? 'layout-harness-new',
+          venueId: v.venueId,
+          seasonId: v.seasonId,
+          ageGroup: v.ageGroup,
+          kind: v.shape.kind,
+          slots: v.shape.slots,
+          zones: v.zones,
+        }
+        opts?.onSuccess?.(row)
+        return
+      }
       opts?.onSuccess?.(undefined)
     },
   }
@@ -227,10 +243,25 @@ export const useClub = () =>
     name: ACCOUNT_CLUB_NAME,
     motto: 'Where football and friendships flourish',
     crestUrl: null,
-    // COACH-5: the club's age group list, empty for the state that shows the
-    // layouts screen pointing at the Club screen.
-    ageGroups: fixtures.state === 'noagegroups' ? [] : ADMIN_AGE_GROUPS,
   })
+// COACH-5: the club's age group list, on its own read; empty for the state
+// that shows the layouts screen pointing at the Club screen.
+export const useClubAgeGroups = () => query(fixtures.state === 'noagegroups' ? ([] as string[]) : ADMIN_AGE_GROUPS)
+export const useUpdateClubAgeGroups = () => {
+  const base = writeMutation()
+  return {
+    ...base,
+    mutate: (vars: { id: string; ageGroups: readonly string[] }, opts?: { onSuccess?: (data: string[]) => void; onError?: (e: Error) => void }) => {
+      adminCalls.writes.push({ name: 'updateClubAgeGroups', vars })
+      if (fixtures.state === 'inflight') return
+      if (fixtures.state === 'writefails') {
+        opts?.onError?.(new Error('the write was refused'))
+        return
+      }
+      opts?.onSuccess?.([...vars.ageGroups])
+    },
+  }
+}
 /* ---- Registered players -------------------------------------------
    The register is the one surface whose state matrix a screenshot has to
    cover in full, so its reads answer from `state` rather than always

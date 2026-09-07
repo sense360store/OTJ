@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   AGE_GROUP_MAX_LENGTH,
   DEFAULT_AGE_GROUPS,
+  LEGACY_DEFAULT_AGE_GROUP,
   MAX_AGE_GROUPS,
+  defaultAgeGroup,
   ageGroupOptions,
   ageGroupProblem,
   ageGroupsConfigured,
@@ -71,6 +73,15 @@ describe('what the session age group control offers', () => {
     const list = ['U7s']
     ageGroupOptions(list, 'U9s')
     expect(list).toEqual(['U7s'])
+  })
+
+  it('starts a new session on the club list when there is one, keeping a label the list carries', () => {
+    expect(defaultAgeGroup(['U7s', 'U8s'])).toBe('U7s')
+    expect(defaultAgeGroup(['U7s', 'U8s'], 'U8s')).toBe('U8s')
+    expect(defaultAgeGroup(['U7s', 'U8s'], 'U12s')).toBe('U7s')
+    expect(defaultAgeGroup([])).toBe(LEGACY_DEFAULT_AGE_GROUP)
+    expect(defaultAgeGroup(undefined, 'U9s')).toBe('U9s')
+    expect(defaultAgeGroup(null, '  ')).toBe(LEGACY_DEFAULT_AGE_GROUP)
   })
 
   it('says whether the club configured a list at all', () => {

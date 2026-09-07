@@ -13,7 +13,7 @@ import {
   useMyCapabilities,
   useSession,
   useTeams,
-  useClub,
+  useClubAgeGroups,
   useVenues,
 } from '../lib/queries'
 import { ActivityStructureSummary } from '../components/ActivityRoleControls'
@@ -21,7 +21,7 @@ import { type ActivityRole, applyRole, setNotRunning } from '../lib/activityRole
 import { blankSession, embedSrc, isSampleMedia, sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
 import type { Venue } from '../lib/venues'
-import { ageGroupOptions } from '../lib/ageGroups'
+import { ageGroupOptions, defaultAgeGroup } from '../lib/ageGroups'
 import { newSessionCoverage, soleCoveredTeamId, toggleCoveredTeam } from '../lib/sessionTeams'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
@@ -597,7 +597,7 @@ function PlannerEditor({
   const { data: teams = [] } = useTeams()
   const venuesQuery = useVenues()
   const venues = venuesQuery.data ?? []
-  const { data: club } = useClub()
+  const { data: clubAgeGroups } = useClubAgeGroups()
   const { data: boards = [] } = useBoards()
   const memberById = useMemberMap()
   // The lookups only this host can resolve for the shared editor's rows.
@@ -651,6 +651,16 @@ function PlannerEditor({
     coverageSeeded.current = true
     setSession((s) => (s.teamIds.length > 0 ? s : { ...s, teamIds: newSessionCoverage(teams.map((t) => t.id)) }))
   }, [teams])
+  // The age group, the same way: once the club's list answers, a NEW
+  // session starts on that list rather than on the one label it always
+  // started on (COACH-5). Once, and only where the coach has not already
+  // chosen a label the list carries; an existing session never seeds.
+  const ageSeeded = useRef(!!existing)
+  useEffect(() => {
+    if (ageSeeded.current || !clubAgeGroups || clubAgeGroups.length === 0) return
+    ageSeeded.current = true
+    setSession((s) => ({ ...s, ageGroup: defaultAgeGroup(clubAgeGroups, s.ageGroup) }))
+  }, [clubAgeGroups])
   const [addOpen, setAddOpen] = useState(false)
   const [boardPickerOpen, setBoardPickerOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -964,7 +974,7 @@ function PlannerEditor({
             teams={teams}
             venues={venues}
             venuesUnavailable={venuesQuery.isError}
-            ageGroups={club?.ageGroups}
+            ageGroups={clubAgeGroups}
             attachedBoardName={attachedBoard?.name}
             onField={setField}
             onIntentions={setIntentions}

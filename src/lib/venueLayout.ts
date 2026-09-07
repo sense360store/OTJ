@@ -310,8 +310,19 @@ export function moveZone(zones: readonly LayoutZone[], n: number, dx: number, dy
   return zones.map((z) => (z.n === n ? fitZone({ ...z, x: z.x + dx, y: z.y + dy }) : z))
 }
 
+// Growing stops at the surface's edge rather than pushing the zone back
+// from it: a corner dragged past the right edge widens the zone to the edge
+// and leaves its left side where it was.
 export function resizeZone(zones: readonly LayoutZone[], n: number, dw: number, dh: number): LayoutZone[] {
-  return zones.map((z) => (z.n === n ? fitZone({ ...z, w: z.w + dw, h: z.h + dh }) : z))
+  return zones.map((z) =>
+    z.n === n
+      ? fitZone({
+          ...z,
+          w: Math.max(MIN_ZONE_SIZE, Math.min(z.w + dw, 1 - z.x)),
+          h: Math.max(MIN_ZONE_SIZE, Math.min(z.h + dh, 1 - z.y)),
+        })
+      : z,
+  )
 }
 
 export function renameZone(zones: readonly LayoutZone[], n: number, name: string): LayoutZone[] {

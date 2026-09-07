@@ -4,13 +4,22 @@
 // the login screen and every other crest usage read the row live and fall
 // back to the bundled asset. REVIEW: capability gated admin surface.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CREST_TYPES, useClearCrest, useClub, useMyCapabilities, useUpdateClub, useUploadCrest } from '../lib/queries'
+import {
+  CREST_TYPES,
+  useClearCrest,
+  useClub,
+  useClubAgeGroups,
+  useMyCapabilities,
+  useUpdateClub,
+  useUpdateClubAgeGroups,
+  useUploadCrest,
+} from '../lib/queries'
 import { useClubBranding } from '../hooks/useClubBranding'
 import type { Club } from '../lib/data'
 import { AGE_GROUP_MAX_LENGTH, ageGroupProblem, normaliseAgeGroups, trimAgeGroup } from '../lib/ageGroups'
 import { Icon } from '../components/icons'
 import { Button, Card, IconButton, Note, TextField } from '../components/primitives'
-import { ErrorNote, Loading } from '../components/ui'
+import { ErrorNote, Loading, LoadingRows } from '../components/ui'
 
 type Note = { kind: 'ok' | 'error'; text: string } | null
 
@@ -207,17 +216,56 @@ function CrestCard({ club }: { club: Club }) {
 export const AGE_GROUPS_INTRO =
   'The age groups the club runs, as the labels a coach picks for a session and an admin files a venue layout under. Until the list is set, sessions offer the standard U6s to U12s labels; a venue layout needs the list.'
 
+export const AGE_GROUPS_CHANGED_ELSEWHERE =
+  'The age groups were changed by somebody else. The list below is theirs; make your change again.'
+
+const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i])
+
 // The club's age group vocabulary (0053): the one list the session age group
 // control and the venue layout admin read. A local draft, saved whole; the
-// readback decides whether it is saved, field for field.
-export function AgeGroupsCard({ club }: { club: Club }) {
-  const update = useUpdateClub()
-  const [draft, setDraft] = useState<string[]>(club.ageGroups)
+// readback decides whether it is saved, field for field. The list rides its
+// own read (useClubAgeGroups), so this card carries its own read states.
+export function AgeGroupsCard({ clubId }: { clubId: string }) {
+  const read = useClubAgeGroups()
+  return (
+    <Card padded className="admin-stack-card">
+      <h3>Age groups</h3>
+      <p className="admin-intro">{AGE_GROUPS_INTRO}</p>
+      {read.isError ? (
+        <ErrorNote onRetry={() => void read.refetch()}>
+          The age groups could not be read. Refresh to try again.
+        </ErrorNote>
+      ) : read.data === undefined ? (
+        <LoadingRows rows={1} label="Loading age groups" />
+      ) : (
+        <AgeGroupsEditor clubId={clubId} stored={read.data} />
+      )}
+    </Card>
+  )
+}
+
+function AgeGroupsEditor({ clubId, stored }: { clubId: string; stored: string[] }) {
+  const update = useUpdateClubAgeGroups()
+  const [draft, setDraft] = useState<string[]>(stored)
+  // The stored list the draft was taken from. A fresh read that differs from
+  // it is somebody else's save: an untouched draft follows it silently, an
+  // edited one is dropped and the reason said, because saving the edited
+  // draft would have replaced their list wholesale. Reconciled during
+  // render, as the Teams screen does, so the draft never survives a paint
+  // it should not.
+  const [base, setBase] = useState<string[]>(stored)
   const [entry, setEntry] = useState('')
   const [entryError, setEntryError] = useState<string | null>(null)
   const [note, setNote] = useState<Note>(null)
-  const stored = club.ageGroups
-  const changed = draft.join('\u0000') !== stored.join('\u0000')
+  if (!sameList(base, stored)) {
+    setBase(stored)
+    if (sameList(draft, base)) setDraft(stored)
+    else {
+      setDraft(stored)
+      setNote({ kind: 'error', text: AGE_GROUPS_CHANGED_ELSEWHERE })
+    }
+  }
+  const changed = !sameList(draft, stored)
 
   const add = () => {
     const problem = ageGroupProblem(entry, draft)
@@ -235,11 +283,11 @@ export function AgeGroupsCard({ club }: { club: Club }) {
     setNote(null)
     const sending = normaliseAgeGroups(draft)
     update.mutate(
-      { id: club.id, ageGroups: sending },
+      { id: clubId, ageGroups: sending },
       {
-        onSuccess: (readback) => {
-          const held = readback?.ageGroups ?? null
-          if (held && held.join('\u0000') === sending.join('\u0000')) {
+        onSuccess: (held) => {
+          if (sameList(held, sending)) {
+            setBase(held)
             setDraft(held)
             setNote({ kind: 'ok', text: 'Saved. Sessions and venue layouts read this list now.' })
           } else {
@@ -252,9 +300,7 @@ export function AgeGroupsCard({ club }: { club: Club }) {
   }
 
   return (
-    <Card padded className="admin-stack-card">
-      <h3>Age groups</h3>
-      <p className="admin-intro">{AGE_GROUPS_INTRO}</p>
+    <>
       {draft.length === 0 ? (
         <p className="admin-hint">No age groups yet. Add the first one below.</p>
       ) : (
@@ -304,7 +350,7 @@ export function AgeGroupsCard({ club }: { club: Club }) {
           {note.text}
         </Note>
       )}
-    </Card>
+    </>
   )
 }
 
@@ -327,7 +373,7 @@ export function AdminClub() {
       </div>
       <IdentityCard club={club} />
       <CrestCard club={club} />
-      <AgeGroupsCard club={club} />
+      <AgeGroupsCard clubId={club.id} />
     </div>
   )
 }

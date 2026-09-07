@@ -32,7 +32,7 @@ import { ageGroupsConfigured } from '../lib/ageGroups'
 import type { Season } from '../lib/data'
 import {
   isVenueLayoutScopeTaken,
-  useClub,
+  useClubAgeGroups,
   useDeleteVenueLayout,
   useMyCapabilities,
   useSaveVenueLayout,
@@ -53,6 +53,7 @@ import {
   layoutsForScope,
   renameZone,
   zoneLabel,
+  type LayoutScope,
   type LayoutShape,
   type LayoutZone,
   type VenueLayout,
@@ -74,6 +75,12 @@ type Note = { tone: 'success' | 'danger' | 'warning'; text: string }
 
 type Draft = {
   shape: LayoutShape
+  // The scope the draft opened under, PINNED here rather than read off the
+  // controls at save time: the controls freeze while a draft is open, but
+  // the defaults behind them follow the season and club reads, and a season
+  // activated or an age group removed elsewhere would otherwise file the
+  // drawing under a scope nobody here chose.
+  scope: LayoutScope
   // The row being redrawn, or null for a new layout.
   layoutId: string | null
   // The stored signature when the draft opened, so a change made elsewhere
@@ -281,7 +288,7 @@ export function AdminVenueLayouts() {
   const { caps } = useMyCapabilities()
   const venues = useVenues()
   const seasons = useSeasons()
-  const club = useClub()
+  const clubAgeGroups = useClubAgeGroups()
   const layouts = useVenueLayouts()
   const save = useSaveVenueLayout()
   const remove = useDeleteVenueLayout()
@@ -302,7 +309,7 @@ export function AdminVenueLayouts() {
   const seasonRows = seasons.data ?? []
   const currentSeason = seasonRows.find((s) => s.isCurrent) ?? seasonRows[0] ?? null
   const seasonId = seasonChoice && seasonRows.some((s) => s.id === seasonChoice) ? seasonChoice : (currentSeason?.id ?? null)
-  const ageGroups = club.data?.ageGroups ?? []
+  const ageGroups = clubAgeGroups.data ?? []
   const ageGroup = ageChoice && ageGroups.includes(ageChoice) ? ageChoice : (ageGroups[0] ?? null)
   const scope = venue && seasonId && ageGroup ? { venueId: venue.id, seasonId, ageGroup } : null
   const inScope = scope ? layoutsForScope(layouts.data ?? [], scope) : []
@@ -326,8 +333,8 @@ export function AdminVenueLayouts() {
     }
   }
 
-  if (venues.isError || seasons.isError || club.isError || layouts.isError) return <ErrorNote />
-  if (venues.isLoading || seasons.isLoading || club.isLoading || layouts.isLoading) return <Loading />
+  if (venues.isError || seasons.isError || clubAgeGroups.isError || layouts.isError) return <ErrorNote />
+  if (venues.isLoading || seasons.isLoading || clubAgeGroups.isLoading || layouts.isLoading) return <Loading />
   // The route guard already keeps members without club.manage out; this is
   // belt and braces for the brief render before a redirect.
   if (!caps.has('club.manage')) return null
@@ -352,6 +359,7 @@ export function AdminVenueLayouts() {
   const seasonName = seasonRows.find((s) => s.id === seasonId)?.name ?? ''
 
   const startDraft = (shape: LayoutShape) => {
+    if (!scope) return
     const stored = layoutForShape(inScope, shape)
     const zones = stored?.zones
       ? { ...stored.zones, zones: completeZones(stored.zones.zones, shape) }
@@ -360,6 +368,7 @@ export function AdminVenueLayouts() {
     setEditorNote(null)
     setDraft({
       shape,
+      scope,
       layoutId: stored?.id ?? null,
       base: stored?.zones ? layoutSignature(stored.zones, shape) : null,
       zones,
@@ -367,21 +376,27 @@ export function AdminVenueLayouts() {
   }
 
   const saveDraft = () => {
-    if (!draft || !scope) return
-    const { shape, zones } = draft
+    if (!draft) return
+    const { shape, zones, scope: draftScope } = draft
+    const savedSeason = seasonRows.find((s) => s.id === draftScope.seasonId)?.name ?? ''
     setEditorNote(null)
     wantNoteFocus()
     save.mutate(
-      { id: draft.layoutId ?? undefined, ...scope, shape, zones },
+      { id: draft.layoutId ?? undefined, ...draftScope, shape, zones },
       {
         onSuccess: (stored) => {
-          const agreed = stored.zones !== null && layoutSignature(stored.zones, shape) === layoutSignature(zones, shape)
-          if (!agreed) {
+          const storedSignature = stored.zones ? layoutSignature(stored.zones, shape) : null
+          if (storedSignature !== layoutSignature(zones, shape)) {
+            // The row now holds what came back, so the draft's base moves
+            // to it (and a new layout takes its id): the refetch that
+            // follows must not read the admin's own save as somebody else's
+            // change and drop the draft it just told them to save again.
+            setDraft((d) => (d ? { ...d, layoutId: stored.id, base: storedSignature } : d))
             setEditorNote({ tone: 'danger', text: LAYOUT_READBACK_MISMATCH })
             return
           }
           setDraft(null)
-          setNote({ tone: 'success', text: `${layoutShapeLabel(shape)} saved for ${seasonName}, ${scope.ageGroup}.` })
+          setNote({ tone: 'success', text: `${layoutShapeLabel(shape)} saved for ${savedSeason}, ${draftScope.ageGroup}.` })
         },
         onError: (e) => {
           if (isVenueLayoutScopeTaken(e)) {

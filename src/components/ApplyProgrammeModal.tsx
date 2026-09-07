@@ -12,8 +12,8 @@ import { useMemo, useRef, useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useClub, useTeams, useUpsertSession, useVenues } from '../lib/queries'
-import { ageGroupOptions } from '../lib/ageGroups'
+import { useClubAgeGroups, useTeams, useUpsertSession, useVenues } from '../lib/queries'
+import { LEGACY_DEFAULT_AGE_GROUP, ageGroupOptions, defaultAgeGroup } from '../lib/ageGroups'
 import type { Venue } from '../lib/venues'
 import { logSessionWriteError, stableCreateId } from '../lib/sessionSubmit'
 import { sessionCoversAnyTeam } from '../lib/sessionTeams'
@@ -273,7 +273,7 @@ export function ApplyProgrammeModal({
   const { data: teams = [] } = useTeams()
   const upsert = useUpsertSession()
   const { data: venues = [] } = useVenues()
-  const { data: club } = useClub()
+  const { data: clubAgeGroups } = useClubAgeGroups()
 
   const weekCount = Math.max(programme.weeks, ...Object.keys(weekTemplates).map(Number), 1)
   const weeks = Array.from({ length: weekCount }, (_, i) => i + 1)
@@ -284,7 +284,15 @@ export function ApplyProgrammeModal({
   const [weekday, setWeekday] = useState(() => weekdayOf(isoAddDays(todayIso(), 7)))
   const [time, setTime] = useState('17:30')
   const [venueId, setVenueId] = useState('')
-  const [ageGroup, setAgeGroup] = useState('U8s')
+  const [ageGroup, setAgeGroup] = useState(LEGACY_DEFAULT_AGE_GROUP)
+  // Once the club's list answers, the run starts on it rather than on the
+  // one label it always started on (COACH-5); a label the coach has already
+  // chosen from the list is kept.
+  const [ageSeeded, setAgeSeeded] = useState(false)
+  if (!ageSeeded && clubAgeGroups && clubAgeGroups.length > 0) {
+    setAgeSeeded(true)
+    setAgeGroup(defaultAgeGroup(clubAgeGroups, ageGroup))
+  }
   // Per-week date edits survive until the series itself moves.
   const [overrides, setOverrides] = useState<Record<number, string>>({})
   const [error, setError] = useState<string | null>(null)
@@ -438,7 +446,7 @@ export function ApplyProgrammeModal({
       onTeamId={setTeamId}
       ageGroup={ageGroup}
       onAgeGroup={setAgeGroup}
-      ageGroups={club?.ageGroups}
+      ageGroups={clubAgeGroups}
       startDate={startDate}
       onStartDate={pickStart}
       weekday={weekday}

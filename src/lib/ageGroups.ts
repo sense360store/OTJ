@@ -77,6 +77,20 @@ export function ageGroupOptions(clubList: readonly string[] | null | undefined, 
   return base
 }
 
+// What a NEW session starts with. The label the caller already holds when
+// the club's list carries it, else the first label on the club's list (the
+// admin arranged it in their order), else the one label the product always
+// started a session on. So a club with a configured list never files a new
+// session under a label off that list, and a club with none is exactly as it
+// was.
+export const LEGACY_DEFAULT_AGE_GROUP = 'U8s'
+
+export function defaultAgeGroup(clubList: readonly string[] | null | undefined, current?: string): string {
+  const own = current === undefined ? '' : trimAgeGroup(current)
+  if (clubList && clubList.length > 0) return own !== '' && clubList.includes(own) ? own : clubList[0]
+  return own !== '' ? own : LEGACY_DEFAULT_AGE_GROUP
+}
+
 // Whether the club has configured its list at all. Presentation reads this
 // to say so rather than showing the defaults as though the club chose them.
 export function ageGroupsConfigured(clubList: readonly string[] | null | undefined): boolean {

@@ -26,12 +26,12 @@ import { useId, useRef } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { isDrag } from '../lib/tacticsBoard'
 import {
-  MIN_ZONE_SIZE,
   PITCH_VIEW_WIDTH,
   describeLayout,
   describeZone,
-  fitZone,
+  moveZone,
   pitchHeight,
+  resizeZone,
   type LayoutKind,
   type LayoutSize,
   type LayoutZone,
@@ -184,15 +184,12 @@ export function VenueLayoutEditor({
     }
   }
 
-  const replace = (next: LayoutZone) => {
-    onChange(zones.map((z) => (z.n === next.n ? next : z)))
-  }
-
-  const apply = (g: Gesture, dx: number, dy: number): LayoutZone => {
-    const o = g.origin
-    return g.mode === 'move'
-      ? fitZone({ ...o, x: o.x + dx, y: o.y + dy })
-      : fitZone({ ...o, w: Math.max(MIN_ZONE_SIZE, o.w + dx), h: Math.max(MIN_ZONE_SIZE, o.h + dy) })
+  // A gesture applies its WHOLE delta to the zone as it was when the press
+  // began, through the same pure moves the keyboard and the tests use, so
+  // the edge rules live in one place (src/lib/venueLayout.ts).
+  const apply = (g: Gesture, dx: number, dy: number): LayoutZone[] => {
+    const fromOrigin = zones.map((z) => (z.n === g.n ? g.origin : z))
+    return g.mode === 'move' ? moveZone(fromOrigin, g.n, dx, dy) : resizeZone(fromOrigin, g.n, dx, dy)
   }
 
   const onPointerDown = (zone: LayoutZone, mode: Gesture['mode']) => (e: ReactPointerEvent) => {
@@ -211,7 +208,7 @@ export function VenueLayoutEditor({
       g.dragging = true
     }
     const d = deltaFractions(e, g)
-    if (d) replace(apply(g, d.dx, d.dy))
+    if (d) onChange(apply(g, d.dx, d.dy))
   }
 
   const onPointerUp = (zone: LayoutZone) => (e: ReactPointerEvent) => {
@@ -239,11 +236,25 @@ export function VenueLayoutEditor({
     else if (e.key === 'ArrowDown') dy = step
     else return
     e.preventDefault()
-    const next = e.shiftKey
-      ? fitZone({ ...zone, w: Math.max(MIN_ZONE_SIZE, zone.w + dx), h: Math.max(MIN_ZONE_SIZE, zone.h + dy) })
-      : fitZone({ ...zone, x: zone.x + dx, y: zone.y + dy })
-    replace(next)
-    onAnnounce(describeZone(kind, next))
+    const next = e.shiftKey ? resizeZone(zones, zone.n, dx, dy) : moveZone(zones, zone.n, dx, dy)
+    onChange(next)
+    onAnnounce(describeZone(kind, next.find((z) => z.n === zone.n) ?? zone))
+  }
+
+  // The handle is inside the zone, so its events would reach the zone's own
+  // handlers as well and apply the gesture twice. Every handle event stops
+  // here before the shared handler runs.
+  const onHandlePointerMove = (zone: LayoutZone) => (e: ReactPointerEvent) => {
+    e.stopPropagation()
+    onPointerMove(zone)(e)
+  }
+  const onHandlePointerUp = (zone: LayoutZone) => (e: ReactPointerEvent) => {
+    e.stopPropagation()
+    onPointerUp(zone)(e)
+  }
+  const onHandlePointerCancel = (zone: LayoutZone) => (e: ReactPointerEvent) => {
+    e.stopPropagation()
+    onPointerCancel(zone)(e)
   }
 
   return (
@@ -276,9 +287,9 @@ export function VenueLayoutEditor({
               height={HANDLE}
               aria-hidden="true"
               onPointerDown={onPointerDown(z, 'resize')}
-              onPointerMove={onPointerMove(z)}
-              onPointerUp={onPointerUp(z)}
-              onPointerCancel={onPointerCancel(z)}
+              onPointerMove={onHandlePointerMove(z)}
+              onPointerUp={onHandlePointerUp(z)}
+              onPointerCancel={onHandlePointerCancel(z)}
             />
           </g>
         ))}

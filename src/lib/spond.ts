@@ -6,6 +6,7 @@
 import { blankSession } from './data'
 import type { Session, SpondEvent, SpondMapping } from './data'
 import { newSessionCoverage } from './sessionTeams'
+import { LEGACY_DEFAULT_AGE_GROUP } from './ageGroups'
 import { matchVenueByLocation, type Venue } from './venues'
 
 // ---- The event aggregate, and who it counts --------------------------
@@ -431,15 +432,23 @@ export function spondPlanSuggestions({
 // so nothing downstream could tell the two apart. Required, dropping it
 // fails the build. A caller that genuinely has no venues passes [] and says
 // so.
+// `ageGroup` is what the club's list says a new session starts on
+// (defaultAgeGroup in ./ageGroups, COACH-5); the caller resolves it, and the
+// default is the label every new session always started on. Defaulted,
+// unlike `venues`, because an omitted age group is the product as it was
+// rather than a feature switched off, and the arity the tests pin counts
+// the four before it.
 export function sessionFromSpondEvent(
   event: SpondEvent,
   coachId: string,
   allTeamIds: string[],
   venues: readonly Venue[],
+  ageGroup: string = LEGACY_DEFAULT_AGE_GROUP,
 ): Session {
   const { date, time } = spondEventLocalDateTime(event.startsAt)
   return {
     ...blankSession(coachId),
+    ageGroup,
     teamIds: newSessionCoverage(allTeamIds, event.teamId),
     name: event.title,
     date,

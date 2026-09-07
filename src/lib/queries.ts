@@ -295,7 +295,6 @@ interface ClubRow {
   name: string
   motto: string | null
   crest_url: string | null
-  age_groups: string[] | null
 }
 
 // ---- Column lists ------------------------------------------------------
@@ -322,7 +321,7 @@ const TEAM_COLS = 'id, club_id, name, bib_colour, created_at, sort_order'
 const PROFILE_COLS =
   'id, full_name, avatar, avatar_url, role, team_id, all_teams, created_at, member_roles(roles(id, key, label, system)), member_teams(team_id)'
 const ROLE_COLS = 'id, club_id, key, label, system'
-const CLUB_COLS = 'id, name, motto, crest_url, age_groups'
+const CLUB_COLS = 'id, name, motto, crest_url'
 
 // ---- Mappers -----------------------------------------------------------
 
@@ -598,15 +597,7 @@ function toMember(r: ProfileRow): Member {
 }
 
 function toClub(r: ClubRow): Club {
-  return {
-    id: r.id,
-    name: r.name,
-    motto: r.motto ?? '',
-    crestUrl: r.crest_url,
-    // Rebuilt through the same rule the write applies, so a stored list and
-    // a list about to be stored compare equal field for field.
-    ageGroups: normaliseAgeGroups(Array.isArray(r.age_groups) ? r.age_groups : []),
-  }
+  return { id: r.id, name: r.name, motto: r.motto ?? '', crestUrl: r.crest_url }
 }
 
 // ---- Reads -------------------------------------------------------------
@@ -3403,25 +3394,64 @@ export function useRemoveAvatar() {
 // external value) is left alone by the cleanup, which only removes bucket
 // objects.
 
-// ageGroups (0053) is the club's canonical age group list. It is sent
-// normalised (trimmed, distinct, bounded, src/lib/ageGroups.ts), which is the
-// shape clubs_age_groups_valid accepts, and the readback is returned so the
-// screen can compare what the row holds with what it sent rather than trust
-// a request that returned.
 export function useUpdateClub() {
   const qc = useQueryClient()
-  return useMutation<Club | null, Error, { id: string; name?: string; motto?: string; ageGroups?: readonly string[] }>({
-    mutationFn: async ({ id, name, motto, ageGroups }) => {
+  return useMutation<void, Error, { id: string; name?: string; motto?: string }>({
+    mutationFn: async ({ id, name, motto }) => {
       const patch: Record<string, unknown> = {}
       if (name !== undefined) patch.name = name
       if (motto !== undefined) patch.motto = motto || null
-      if (ageGroups !== undefined) patch.age_groups = normaliseAgeGroups(ageGroups)
-      const { data, error } = await supabase.from('clubs').update(patch).eq('id', id).select(CLUB_COLS)
+      const { error } = await supabase.from('clubs').update(patch).eq('id', id)
       if (error) throw error
-      const row = (data as ClubRow[])[0]
-      return row ? toClub(row) : null
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['club'] }),
+  })
+}
+
+// ---- The club's age group list (0053) -------------------------------------
+// Its OWN read rather than a column on the club read, so the one club read
+// the shell, the sign in screen and the Account screen depend on keeps
+// working against a database this column has not reached yet: a client
+// deployed ahead of the apply loses the list (and falls back to the
+// defaults) rather than the club. Both directions of the write go through
+// normaliseAgeGroups (trimmed, distinct, bounded), which is the shape
+// clubs_age_groups_valid accepts, and the readback is returned so the screen
+// compares what the row holds with what it sent rather than trusting a
+// request that returned.
+
+const CLUB_AGE_GROUPS_KEY = ['club', 'age_groups']
+
+export function useClubAgeGroups(enabled = true) {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: CLUB_AGE_GROUPS_KEY,
+    enabled: enabled && !!user,
+    queryFn: async (): Promise<string[]> => {
+      const { data, error } = await supabase.from('clubs').select('age_groups').limit(1)
+      if (error) throw error
+      const row = (data as { age_groups: string[] | null }[])[0]
+      return normaliseAgeGroups(Array.isArray(row?.age_groups) ? row.age_groups : [])
+    },
+  })
+}
+
+export function useUpdateClubAgeGroups() {
+  const qc = useQueryClient()
+  return useMutation<string[], Error, { id: string; ageGroups: readonly string[] }>({
+    mutationFn: async ({ id, ageGroups }) => {
+      const { data, error } = await supabase
+        .from('clubs')
+        .update({ age_groups: normaliseAgeGroups(ageGroups) })
+        .eq('id', id)
+        .select('age_groups')
+      if (error) throw error
+      const row = (data as { age_groups: string[] | null }[])[0]
+      // Zero rows back is a refusal the policy expressed as silence: the
+      // caller does not hold club.manage, or the club is not theirs.
+      if (!row) throw new Error('The age groups were not saved. You may not hold club.manage.')
+      return normaliseAgeGroups(Array.isArray(row.age_groups) ? row.age_groups : [])
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: CLUB_AGE_GROUPS_KEY }),
   })
 }
 

@@ -93,7 +93,7 @@ describe('one writer, one consumer', () => {
     expect(consumers.map(rel)).toEqual(['routes/AdminVenueLayouts.tsx'])
   })
 
-  it('writes clubs.age_groups only through useUpdateClub', () => {
+  it('reads and writes clubs.age_groups only through the query seam', () => {
     const writers = sourceFiles.filter((f) => rel(f) !== 'lib/queries.ts' && /age_groups/.test(code(f)))
     // useAuth selects profiles.age_groups, the per coach column this feature
     // deliberately does not read as a club list.

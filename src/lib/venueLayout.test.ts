@@ -243,6 +243,15 @@ describe('defaults and editing', () => {
     expect(shrunk[1]).toEqual(zones[1])
   })
 
+  it('growing a zone past the edge widens it to the edge and never moves its other side', () => {
+    const zones = defaultZones(FOUR)
+    const grown = resizeZone(zones, 2, 5, 5)
+    expect(grown[1].x).toBe(zones[1].x)
+    expect(grown[1].y).toBe(zones[1].y)
+    expect(grown[1].x + grown[1].w).toBeCloseTo(1, 10)
+    expect(grown[1].y + grown[1].h).toBeCloseTo(1, 10)
+  })
+
   it('fits a zone that grew past the edge by pulling its position back, not by cutting it', () => {
     const z = fitZone({ n: 1, name: '', x: 0.8, y: 0.8, w: 0.5, h: 0.5 })
     expect(z).toEqual({ n: 1, name: '', x: 0.5, y: 0.5, w: 0.5, h: 0.5 })

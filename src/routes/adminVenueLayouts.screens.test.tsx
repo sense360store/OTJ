@@ -15,7 +15,7 @@
 // =====================================================================
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { Club, Season } from '../lib/data'
+import type { Season } from '../lib/data'
 import type { Venue } from '../lib/venues'
 import { emptyLayoutZones, type VenueLayout } from '../lib/venueLayout'
 
@@ -24,7 +24,7 @@ const SEASONS: Season[] = [
   { id: 's26', name: '2026/27', startsOn: '2026-07-01', endsOn: '2027-06-30', isCurrent: true, archivedAt: null },
   { id: 's25', name: '2025/26', startsOn: '2025-07-01', endsOn: '2026-06-30', isCurrent: false, archivedAt: '2026-07-02T00:00:00Z' },
 ]
-const CLUB: Club = { id: 'c1', name: 'Synthetic Juniors', motto: '', crestUrl: null, ageGroups: ['U7s', 'U8s'] }
+const AGE_GROUPS = ['U7s', 'U8s']
 const FIVE: VenueLayout = {
   id: 'l5',
   venueId: 'v-haggs',
@@ -41,7 +41,7 @@ const reads = {
   venueId: 'v-haggs',
   venues: VENUES,
   seasons: SEASONS,
-  club: CLUB as Club | null,
+  ageGroups: AGE_GROUPS as string[],
   layouts: [FIVE, UNREADABLE] as VenueLayout[],
   loading: false,
   isError: false,
@@ -75,7 +75,7 @@ vi.mock('../lib/queries', () => ({
   useMyCapabilities: () => ({ caps: reads.caps, isPending: false }),
   useVenues: () => query(reads.venues),
   useSeasons: () => query(reads.seasons),
-  useClub: () => query(reads.club),
+  useClubAgeGroups: () => query(reads.ageGroups),
   useVenueLayouts: () => query(reads.layouts),
   useSaveVenueLayout: mutation,
   useDeleteVenueLayout: mutation,
@@ -90,7 +90,7 @@ beforeEach(() => {
   reads.venueId = 'v-haggs'
   reads.venues = VENUES
   reads.seasons = SEASONS
-  reads.club = CLUB
+  reads.ageGroups = AGE_GROUPS
   reads.layouts = [FIVE, UNREADABLE]
   reads.loading = false
   reads.isError = false
@@ -137,7 +137,7 @@ describe('Admin Venue Layouts, rendered', () => {
   })
 
   it('points at the Club screen when the club has no age groups, and offers no card', () => {
-    reads.club = { ...CLUB, ageGroups: [] }
+    reads.ageGroups = []
     const out = html()
     expect(out).toContain('no age groups yet')
     expect(out).toContain('href="/admin/club"')

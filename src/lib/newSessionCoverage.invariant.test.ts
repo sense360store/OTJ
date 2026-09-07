@@ -159,7 +159,9 @@ describe('no create path seeds coverage from the signed in coach', () => {
     // rename the variable to pass this.
     const src = code(read('components/PlanFromSpond.tsx'))
     expect(src).toMatch(/const allTeamIds = \(teamsQuery\.data \?\? \[\]\)\.map\(/)
-    expect(src).toMatch(/sessionFromSpondEvent\(event, user\?\.id \?\? '', allTeamIds, venues\)/)
+    // COACH-5 added the club's age group default as a fifth argument; the
+    // first four are exactly what they were.
+    expect(src).toMatch(/sessionFromSpondEvent\(event, user\?\.id \?\? '', allTeamIds, venues(, defaultAgeGroup\(clubAgeGroups\))?\)/)
   })
 
   it('the planner seeds a draft once, and never an existing session', () => {

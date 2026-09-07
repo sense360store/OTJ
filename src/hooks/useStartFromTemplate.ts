@@ -14,7 +14,8 @@ import { useAuth } from './useAuth'
 import { useNav } from './useNav'
 import { useGuardedSubmit } from './useGuardedSubmit'
 import { useSessions } from '../context/SessionsContext'
-import { useTeams } from '../lib/queries'
+import { useClubAgeGroups, useTeams } from '../lib/queries'
+import { defaultAgeGroup } from '../lib/ageGroups'
 import { newSessionCoverage } from '../lib/sessionTeams'
 import { stableCreateId } from '../lib/sessionSubmit'
 import type { Activity, Session, Template } from '../lib/data'
@@ -32,6 +33,11 @@ export function useStartFromTemplate() {
   // and only the first two are worth waiting through.
   const teamsQuery = useTeams()
   const teams = teamsQuery.data ?? []
+  // The club's age group list (COACH-5): a new session starts on it when it
+  // has answered, and on the one label it always started on when it has
+  // not. Not waited for, unlike the team read: an age group is corrected in
+  // one tap on the planner the coach lands on, coverage is not.
+  const { data: clubAgeGroups } = useClubAgeGroups()
   // One id per template for the life of this screen, so a retry after an
   // ambiguous failure reuses it and cannot create a duplicate; a success
   // navigates away and unmounts, so using the same template again later mints
@@ -48,7 +54,7 @@ export function useStartFromTemplate() {
       name: t.name,
       date: '2026-06-16',
       time: '17:30',
-      ageGroup: 'U8s',
+      ageGroup: defaultAgeGroup(clubAgeGroups),
       venue: '',
       focus: t.focus,
       status: 'upcoming',
