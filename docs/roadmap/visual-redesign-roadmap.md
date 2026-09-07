@@ -1,6 +1,6 @@
 # OTJ visual redesign roadmap
 
-Status: approved direction. VISUAL-00 and VISUAL-01 delivered; VISUAL-02 is in progress, adopted route by route in eight merged pull requests, Home most recently in #228, and Sessions and the remaining admin screens still to come.
+Status: approved direction. VISUAL-00 and VISUAL-01 delivered; VISUAL-02 is in progress, adopted route by route in eight merged pull requests, Home most recently in #228, with Sessions adopted in a PR under review and the remaining admin screens still to come.
 
 Created: 27 August 2026. VISUAL-00 completed 27 August 2026. VISUAL-01 completed 27 August 2026 (merged at 23:16 UTC, which was already 28 August in Yorkshire). Last reviewed 6 September 2026.
 
@@ -125,11 +125,10 @@ Players is deliberately in this wave only after #191, so bulk selection, depende
 **Status, 7 September 2026: in progress.** Adopted, each in its own reviewed
 PR: Registered Players (#212, #213), Activity (#214), Account (#215), Login and
 Set Password (#216), Feedback (#217), Admin Users and Admin Teams (#218), and
-Home (#228, merged 7 September 2026; see Home below). Not yet adopted from
-the initial surface group: Sessions, which is also a VISUAL-01 acceptance
-surface and so has been checked but not adopted in full, and the admin
-screens beyond Users and Teams. The wave is Done when the whole initial
-surface group is adopted, not before.
+Home (#228, merged 7 September 2026; see Home below). Sessions is adopted
+in a PR under review (see Sessions below). Not yet adopted from the initial
+surface group: the admin screens beyond Users and Teams. The wave is Done
+when the whole initial surface group is adopted, not before.
 
 #### Registered Players: complete
 
