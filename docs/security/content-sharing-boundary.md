@@ -1296,10 +1296,27 @@ redeployed together (section 55.6).
   diagram carries exactly two free text fields, the player badge (three
   characters) and the label (twenty four), and both pass through
   `sanitizeText`. Coordinates are clamped to the surface and rounded to four
-  places. At most sixty elements are projected, a repeated stored id keeps the
-  first element (as the client parser does), and an empty or unreadable
+  places. The cap on the two text fields is in UTF-16 code units, as both
+  validators measure, and a cut that would land inside a surrogate pair drops
+  the dangling half, so the public copy is always well formed; both validators
+  refuse a lone surrogate outright. At most sixty elements are projected, a
+  repeated stored id keeps the first element (as the client parser does), and
+  an empty or unreadable
   diagram projects as `null`, which is also what a drill with no diagram
   projects. Only a stored version other than 1 refuses the diagram whole.
+- **Only a `public_full` drill projects a diagram.** The coach facing wording
+  for `public_link_only` is "The words can go in a public link. Photos,
+  diagrams, clips and PDFs stay inside the club", and a hand drawn diagram is
+  a diagram, so the drill's own rights gate it exactly as a media row's rights
+  gate its file: a text only drill publishes its words and nothing it drew.
+  Found by the adversarial review of this change and pinned on all three
+  kinds. Residual, stated rather than solved: a media row is re-checked at
+  read time, while a referenced drill's rights are re-checked at read time
+  only against `internal_only` (0040), so a drill lowered from `public_full`
+  to `public_link_only` after a share was built keeps serving its frozen
+  diagram until the owner refreshes or revokes. Closing that would be a read
+  time rule in `read_public_share`, which is a gated migration, and it is
+  the same family as the frozen `_path` residual in section 38a.
 - **An England Football derived drill projects no diagram, whatever the row
   holds.** The club's licence allows FA images unmodified and never redrawn;
   a hand drawn diagram on an FA drill is that redrawing. This is the same rule
@@ -1386,13 +1403,26 @@ A maximal diagram (sixty of the widest element) is under 6 KiB, and six of
 them in one session are under a quarter of the 256 KiB snapshot cap, both
 pinned in `share_test.ts`. The programme builder still refuses an oversized
 snapshot with a stated reason; a session over the cap is refused by the RPC
-as before (section 38a).
+as before (section 38a). Residual, measured by the adversarial review: the cap
+is now reachable by a session, at roughly forty two distinct drills each
+carrying a maximal diagram (the RPC measures jsonb text, about thirteen
+percent wider than compact JSON), and the session builder has no size check
+of its own, so such a coach gets the generic refusal and a refresh leaves the
+old copy serving. A real session holds six to eight activities. A shared size
+check across the three builders, measuring with the jsonb margin, is the
+follow up if it is ever reached.
 
 ### 55.6 Deployment gate
 
 Both `manage-content-share` and `read-content-share` import the changed
 shared module and must be deployed together through the gated content
-sharing deploy workflow, verified by byte for byte readback. **That deploy is
+sharing deploy workflow, verified by byte for byte readback, **and in this
+order: `read-content-share` first.** Each function bundles its own copy of
+the shared module, so if the management function deployed first, every share
+created or refreshed in the window would carry a `diagram` key the old read
+function's deny list still refuses, and those links would read as unavailable
+until the second deploy landed. The reverse order is safe: the new read
+function accepts absence. **That deploy is
 held** until the content sharing inventory pin (`EXPECTED_LAST_MIGRATION` in
 `verify_no_residue.py`) is reconciled with whatever the COACH-5 migration lane
 applies to the hosted ledger; the pin is not moved to make a deploy pass. Until

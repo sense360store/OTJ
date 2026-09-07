@@ -67,6 +67,9 @@ export const PUBLIC_DIAGRAM_ELEMENT_KEYS: Record<DiagramElementType, readonly st
 const DIAGRAM_KEYS = new Set(['surface', 'elements'])
 const SURFACE_KEYS = new Set(['kind', 'orientation'])
 const FACINGS: readonly string[] = ['up', 'down', 'left', 'right']
+// A lone surrogate, which the server never emits: refused so a half character
+// cannot reach an SVG text node. Kept in step with LONE_SURROGATE in share.ts.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -105,6 +108,7 @@ export function validatePublicDiagram(value: unknown): value is PublicDrillDiagr
       case 'player':
         if (!isFraction(raw.x) || !isFraction(raw.y) || !inVocab(DIAGRAM_COLOURS, raw.colour)) return false
         if (typeof raw.label !== 'string' || raw.label.length > MAX_PLAYER_LABEL) return false
+        if (LONE_SURROGATE.test(raw.label)) return false
         break
       case 'cone':
         if (!isFraction(raw.x) || !isFraction(raw.y) || !inVocab(DIAGRAM_COLOURS, raw.colour)) return false
@@ -127,6 +131,7 @@ export function validatePublicDiagram(value: unknown): value is PublicDrillDiagr
       case 'text':
         if (!isFraction(raw.x) || !isFraction(raw.y)) return false
         if (typeof raw.text !== 'string' || raw.text.length === 0 || raw.text.length > MAX_TEXT_LENGTH) return false
+        if (LONE_SURROGATE.test(raw.text)) return false
         break
     }
   }

@@ -80,6 +80,8 @@ describe('validatePublicDiagram', () => {
       ['a string coordinate', mutated((d) => { el(d, 2).x = '0.5' })],
       ['a label over the cap', mutated((d) => { el(d, 0).label = 'ABCD' })],
       ['a non string label', mutated((d) => { el(d, 0).label = 9 })],
+      ['a lone surrogate in a label', mutated((d) => { el(d, 0).label = '\ud83d' })],
+      ['a lone surrogate in a text', mutated((d) => { el(d, 6).text = 'ab\udc00' })],
       ['a text over the cap', mutated((d) => { el(d, 6).text = 'A'.repeat(25) })],
       ['an empty text', mutated((d) => { el(d, 6).text = '' })],
       ['an unknown colour', mutated((d) => { el(d, 0).colour = 'purple' })],
@@ -97,6 +99,10 @@ describe('validatePublicDiagram', () => {
     for (const [label, value] of cases) {
       expect(validatePublicDiagram(value), `accepted ${label}`).toBe(false)
     }
+  })
+
+  it('accepts a whole emoji in a label, which is two code units', () => {
+    expect(validatePublicDiagram(mutated((d) => { el(d, 0).label = 'A😀' }))).toBe(true)
   })
 
   it('accepts exactly the element cap', () => {

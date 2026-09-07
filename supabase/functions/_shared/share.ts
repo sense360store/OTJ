@@ -455,6 +455,17 @@ function numOrNull(value: unknown): number | null {
 //     key that can exist, and none is an identity: no playerId, no name, no
 //     member id, no shirt number. A key outside the shape is dropped on the
 //     way in and refused by the scanner on the way out.
+//   - ONLY A public_full DRILL PROJECTS A DIAGRAM. The coach facing wording
+//     for public_link_only is "The words can go in a public link. Photos,
+//     diagrams, clips and PDFs stay inside the club", and a hand drawn diagram
+//     is a diagram. So the drill's OWN rights gate it, exactly as a media row's
+//     rights gate its file: a text only drill publishes its words and nothing
+//     it drew. Note the asymmetry with media: a media row is re-checked at
+//     read time, a referenced drill's rights are re-checked at read time only
+//     against internal_only (0040), so a drill lowered from public_full to
+//     public_link_only AFTER a share was built keeps serving its frozen
+//     diagram until the owner refreshes or revokes. Stated in the boundary
+//     document rather than solved with a migration here.
 //   - AN ENGLAND FOOTBALL DERIVED DRILL PROJECTS NO DIAGRAM, whatever the row
 //     holds. The club's licence allows FA images unmodified and never redrawn,
 //     and a hand drawn diagram on an FA drill is that redrawing. This mirrors
@@ -523,7 +534,7 @@ export interface PublicDrillDiagram {
 // may carry) and the validators (what the browser may receive).
 const DIAGRAM_ALLOWED = new Set<string>(['surface', 'elements'])
 const DIAGRAM_SURFACE_ALLOWED = new Set<string>(['kind', 'orientation'])
-const DIAGRAM_ELEMENT_ALLOWED: Record<DiagramElementType, Set<string>> = {
+export const DIAGRAM_ELEMENT_ALLOWED: Record<DiagramElementType, Set<string>> = {
   player: new Set(['type', 'x', 'y', 'colour', 'label']),
   cone: new Set(['type', 'x', 'y', 'colour']),
   ball: new Set(['type', 'x', 'y']),
@@ -558,6 +569,25 @@ function diagramColour(v: unknown): DiagramColour {
   return inVocab(DIAGRAM_COLOURS, v) ? v : 'blue'
 }
 
+// A lone surrogate: a high with no low after it, or a low with no high before.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+const LONE_SURROGATES = new RegExp(LONE_SURROGATE.source, 'g')
+
+// The two capped text fields. sanitizeText caps by UTF-16 code unit, and the
+// 0046 constraint caps the stored value by code point, so a stored label of
+// three emoji is valid and a code unit slice of it ends on half a character.
+// The cap stays in code units (both validators measure .length, so a code
+// point cap would emit what they refuse) and every lone surrogate, at the cut
+// or anywhere a corrupt value put one, is dropped, so the public copy is
+// always well formed, within the cap, and never refused by a validator for a
+// character the coach cannot see.
+function diagramText(v: unknown, max: number): string | null {
+  const s = sanitizeText(v, max)
+  if (s === null) return null
+  const clean = s.replace(LONE_SURROGATES, '').trim()
+  return clean.length > 0 ? clean : null
+}
+
 // One element, rebuilt field by field from its allow list. Returns null to
 // drop it. Never spreads its input, so no key it does not name can leave it.
 function projectDiagramElement(raw: unknown): PublicDiagramElement | null {
@@ -567,7 +597,7 @@ function projectDiagramElement(raw: unknown): PublicDiagramElement | null {
       const x = diagramFraction(raw.x)
       const y = diagramFraction(raw.y)
       if (x === null || y === null) return null
-      return { type: 'player', x, y, colour: diagramColour(raw.colour), label: sanitizeText(raw.label, MAX_DIAGRAM_LABEL) ?? '' }
+      return { type: 'player', x, y, colour: diagramColour(raw.colour), label: diagramText(raw.label, MAX_DIAGRAM_LABEL) ?? '' }
     }
     case 'cone': {
       const x = diagramFraction(raw.x)
@@ -623,7 +653,7 @@ function projectDiagramElement(raw: unknown): PublicDiagramElement | null {
       const x = diagramFraction(raw.x)
       const y = diagramFraction(raw.y)
       if (x === null || y === null) return null
-      const text = sanitizeText(raw.text, MAX_DIAGRAM_TEXT)
+      const text = diagramText(raw.text, MAX_DIAGRAM_TEXT)
       // A label with nothing left in it draws nothing, so it goes.
       if (text === null) return null
       return { type: 'text', x, y, text }
@@ -710,6 +740,7 @@ export function isPublicDrillDiagram(value: unknown): value is PublicDrillDiagra
       case 'player':
         if (!isFraction(raw.x) || !isFraction(raw.y) || !inVocab(DIAGRAM_COLOURS, raw.colour)) return false
         if (typeof raw.label !== 'string' || raw.label.length > MAX_DIAGRAM_LABEL) return false
+        if (LONE_SURROGATE.test(raw.label)) return false
         break
       case 'cone':
         if (!isFraction(raw.x) || !isFraction(raw.y) || !inVocab(DIAGRAM_COLOURS, raw.colour)) return false
@@ -732,6 +763,7 @@ export function isPublicDrillDiagram(value: unknown): value is PublicDrillDiagra
       case 'text':
         if (!isFraction(raw.x) || !isFraction(raw.y)) return false
         if (typeof raw.text !== 'string' || raw.text.length === 0 || raw.text.length > MAX_DIAGRAM_TEXT) return false
+        if (LONE_SURROGATE.test(raw.text)) return false
         break
       default:
         return false
@@ -799,7 +831,9 @@ function projectDrillFields(drill: DrillRow): DrillFields {
     // every referenced drill get the same answer: a redrawn FA diagram is
     // outside the club's licence and is never published, whatever the row
     // holds. Provenance is the row's recorded source, never its rights value.
-    diagram: rowProvenance(drill) === 'fa' ? null : projectDrillDiagram(drill.diagram),
+    diagram: drill.rights === 'public_full' && rowProvenance(drill) !== 'fa'
+      ? projectDrillDiagram(drill.diagram)
+      : null,
   }
 }
 

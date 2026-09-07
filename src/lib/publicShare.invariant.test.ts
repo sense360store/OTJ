@@ -14,6 +14,7 @@ import {
   buildDrillSnapshot,
   buildProgrammeSnapshot,
   buildSessionSnapshot,
+  DIAGRAM_ELEMENT_ALLOWED,
   isPublicDrillDiagram,
   projectDrillDiagram,
   SNAPSHOT_VERSION,
@@ -170,9 +171,13 @@ describe('the two halves name the same shapes', () => {
     // SOURCE TEXT for the migration, which states the stored shape as SQL.
     const projected = projectDrillDiagram(STORED_DIAGRAM)!
     const sql = read('supabase/migrations/0046_drill_diagram.sql')
+    // The server's VALIDATOR set, not only what its projection happens to
+    // emit: a widening of the allow list alone would otherwise go unnoticed.
+    expect(Object.keys(DIAGRAM_ELEMENT_ALLOWED).sort()).toEqual(Object.keys(PUBLIC_DIAGRAM_ELEMENT_KEYS).sort())
     for (const el of projected.elements) {
       const type = el.type as keyof typeof PUBLIC_DIAGRAM_ELEMENT_KEYS
       expect(Object.keys(el), `server keys for ${type}`).toEqual([...PUBLIC_DIAGRAM_ELEMENT_KEYS[type]])
+      expect([...DIAGRAM_ELEMENT_ALLOWED[type]].sort(), `server allow list for ${type}`).toEqual([...PUBLIC_DIAGRAM_ELEMENT_KEYS[type]].sort())
       const stored = new RegExp(`when '${type}'\\s+then public\\.drill_diagram_keys_within\\(p_el, array\\[([^\\]]*)\\]`).exec(sql)
       expect(stored, `the migration has no shape for ${type}`).toBeTruthy()
       const sqlKeys = [...stored![1].matchAll(/'(\w+)'/g)].map((m) => m[1]).filter((k) => k !== 'id')

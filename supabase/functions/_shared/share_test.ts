@@ -2044,6 +2044,57 @@ Deno.test('diagram: an England Football derived drill projects no diagram, whate
   assert(third.diagram !== null)
 })
 
+Deno.test('diagram: a Public text only drill keeps its diagram inside the club, on every path', () => {
+  // The rights option reads "Photos, diagrams, clips and PDFs stay inside the
+  // club", and a hand drawn diagram is a diagram. Found by the adversarial
+  // review of this change, which is why it is pinned on all three kinds.
+  const textOnly = buildDrillSnapshot(drill({ rights: 'public_link_only', diagram: storedDiagram() }), null, AT)
+  assertEquals(textOnly.diagram, null)
+  assert(JSON.stringify(textOnly).includes('Rondo under pressure'), 'the words still publish')
+
+  const sess = buildSessionSnapshot(
+    session(),
+    [drillA({ rights: 'public_link_only', diagram: storedDiagram() }), drillB({ diagram: storedDiagram() })],
+    [],
+    null,
+    AT,
+  )
+  assertEquals(sess.referencedDrills[0].diagram, null)
+  assert(sess.referencedDrills[1].diagram !== null, 'the public_full drill beside it still does')
+
+  const { p, templates, drills, media: m } = twoWeeks()
+  drills[0].rights = 'public_link_only'
+  drills[0].diagram = storedDiagram()
+  const prog = buildProgrammeSnapshot(p, templates, drills, m, AT)
+  assertEquals(prog.referencedDrills.find((d) => d.title === 'Rondo under pressure')?.diagram, null)
+})
+
+Deno.test('diagram: the label cap never splits a surrogate pair, and the validators refuse a lone one', () => {
+  const d = projectDrillDiagram(storedDiagram({
+    elements: [
+      { type: 'player', id: 'player-1', x: 0.5, y: 0.5, colour: 'blue', label: '😀😀😀' },
+      { type: 'player', id: 'player-2', x: 0.5, y: 0.5, colour: 'blue', label: 'A😀' },
+      { type: 'text', id: 'text-3', x: 0.5, y: 0.5, text: 'A'.repeat(MAX_DIAGRAM_TEXT - 1) + '😀' },
+    ],
+  }))
+  assert(d !== null)
+  const [p1, p2, t3] = d.elements as unknown as Array<Record<string, string>>
+  // Three emoji is six code units; the cut lands inside the second and the
+  // dangling half is dropped rather than published.
+  assertEquals(p1.label, '😀')
+  assertEquals(p2.label, 'A😀')
+  assertEquals(t3.text, 'A'.repeat(MAX_DIAGRAM_TEXT - 1))
+  for (const s of [p1.label, p2.label, t3.text]) {
+    assert(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s), 'a lone surrogate was published')
+  }
+  assert(isPublicDrillDiagram(d))
+  // A lone surrogate handed to the validator is refused outright.
+  const lone = { surface: d.surface, elements: [{ type: 'player', x: 0.5, y: 0.5, colour: 'blue', label: '\ud83d' }] }
+  assert(!isPublicDrillDiagram(lone))
+  const loneText = { surface: d.surface, elements: [{ type: 'text', x: 0.5, y: 0.5, text: 'ab\udc00' }] }
+  assert(!isPublicDrillDiagram(loneText))
+})
+
 Deno.test('diagram: a club drill carries it into a standalone, a session and a programme snapshot', () => {
   const standalone = buildDrillSnapshot(drill({ diagram: storedDiagram() }), null, AT)
   assertAllowlistedKeys(standalone)

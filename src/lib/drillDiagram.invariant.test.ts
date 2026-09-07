@@ -511,6 +511,14 @@ describe('the diagram reaches a public link only through the reviewed projection
     expect(JSON.stringify(fa)).toContain('Rondo 4v1')
   })
 
+  it('is never projected for a Public text only drill, whose diagrams stay inside the club', () => {
+    // BEHAVIOURAL. RIGHTS_OPTIONS says so in the coach's words; the projection
+    // gates on the drill's own rights, as media signing gates on the row's.
+    const textOnly = buildDrillSnapshot({ ...row(), rights: 'public_link_only' } as never, null, '2026-08-11T00:00:00Z')
+    expect(textOnly.diagram).toBeNull()
+    expect(JSON.stringify(textOnly)).toContain('Rondo 4v1')
+  })
+
   it('drops an identity shaped key on the way into a public copy', () => {
     // BEHAVIOURAL. The projection rebuilds each element from its allow list,
     // exactly as parseDrillDiagram does, so nothing that reached the column
