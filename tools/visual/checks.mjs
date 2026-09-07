@@ -4624,6 +4624,25 @@ const focusReturned = async (page, d) => {
     await page.close()
   }
 
+  /* ---- the nested form: Escape closes the drill form and NOT the week plan editor ---- */
+  {
+    const page = await open('weekplan', 1280, { caps: 'author' })
+    if (await pressed(page.getByRole('button', { name: 'New drill', exact: true }), 'weekplan: New drill is pressed')) {
+      await page.waitForTimeout(150)
+      const before = await page.evaluate(() => document.querySelectorAll('.modal').length)
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(200)
+      const after = await page.evaluate(() => ({
+        dialogs: document.querySelectorAll('.modal').length,
+        editor: [...document.querySelectorAll('.modal')].some((m) => m.textContent?.includes('Edit template')),
+        opener: document.activeElement?.textContent?.trim() ?? 'nothing',
+      }))
+      check('Escape in the nested drill form closes the form alone; the week plan editor stays with focus on New drill',
+        before === 2 && after.dialogs === 1 && after.editor && after.opener === 'New drill', JSON.stringify({ before, after }))
+    }
+    await page.close()
+  }
+
   /* ---- Add to plan is inert without a title, and a typed drill lands as a row ---- */
   {
     const page = await open('planner', 1280, { caps: 'author' })

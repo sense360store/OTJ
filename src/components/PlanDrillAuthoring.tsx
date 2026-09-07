@@ -161,14 +161,22 @@ export function usePlanDrillAuthoring<D>(args: PlanDrillAuthoringArgs<D>): PlanD
 export function useAuthoringReturn<D>(host: AuthoringHost): { id: string | null; draft: D } | null {
   const [params, setParams] = useSearchParams()
   const { user } = useAuth()
+  // Read ONCE, at mount. The token this mount arrived with is the one it
+  // takes and the one it strips; a token that reaches the address later is
+  // not this mount's business. leaveToDraw replaces the host's own history
+  // entry with the tokenised address a beat before it pushes the Drill
+  // Maker, and a strip keyed on "the address has a token" could fire in
+  // that beat and replace the Drill Maker's entry with a bare one, sending
+  // the coach straight back. Keyed on the mount, it cannot.
+  const [arrivedWith] = useState(() => params.get(DRAFT_PARAM))
   const [taken] = useState(() =>
-    user?.id ? takeDraft<D>(browserSessionStorage(), { host, token: params.get(DRAFT_PARAM), userId: user.id }) : null,
+    user?.id && arrivedWith ? takeDraft<D>(browserSessionStorage(), { host, token: arrivedWith, userId: user.id }) : null,
   )
   useEffect(() => {
-    if (!params.has(DRAFT_PARAM)) return
+    if (!arrivedWith || params.get(DRAFT_PARAM) !== arrivedWith) return
     const next = new URLSearchParams(params)
     next.delete(DRAFT_PARAM)
     setParams(next, { replace: true })
-  }, [params, setParams])
+  }, [arrivedWith, params, setParams])
   return taken
 }

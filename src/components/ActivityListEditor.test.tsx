@@ -505,6 +505,43 @@ describe('COACH-11: creating a drill from either surface', () => {
     }
   })
 
+  it('never offers Turn into a drill on a row whose drill was deleted', () => {
+    // The dated row renders the custom body when the drill resolves to
+    // null, and a deleted drill resolves to null too. The offer keys on the
+    // activity's own drillId, because the plan rules refuse to replace a
+    // drill row and the created drill would reach no plan.
+    const s = authoringSpies()
+    const removed: Activity[] = [act({ drillId: 'd-gone', title: undefined })]
+    const html = renderToStaticMarkup(
+      <ActivityListEditor
+        activities={removed}
+        variant={{
+          kind: 'session',
+          readOnly: false,
+          busy: false,
+          empty: null,
+          expandedIdx: null,
+          onToggle: s.onToggle,
+          onStandDown: s.onStandDown,
+          draggingIdx: null,
+          dragHandlersFor: s.dragHandlersFor,
+          content: () => ({ title: 'Removed drill', drill: null, thumb: null, expandedMedia: null, expandedDiagram: null, drillHref: '' }),
+        }}
+        onPhase={s.onPhase}
+        onDuration={s.onDuration}
+        onRole={s.onRole}
+        onRemove={s.onRemove}
+        onAddLibrary={s.onAddLibrary}
+        onAddCustom={s.onAddCustom}
+        onNewDrill={s.onNewDrill}
+        onTurnIntoDrill={s.onTurnIntoDrill}
+      />,
+    )
+    expect(html).toContain('Removed drill')
+    expect(html).not.toContain('Turn into a drill')
+    expect(html).toContain('New drill')
+  })
+
   it('freezes both with every other write control while a session write is in flight', () => {
     const s = authoringSpies()
     const els = elements(withAuthoring('session', s, { busy: true }))

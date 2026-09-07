@@ -127,7 +127,7 @@ describe('leaveToDraw', () => {
 
   it('stashes the draft under a fresh token, then opens the Drill Maker with a return address carrying it', () => {
     const s = storage()
-    const navigate = vi.fn<(to: string) => void>()
+    const navigate = vi.fn<(to: string, options?: { replace: boolean }) => void>()
     const outcome = leaveToDraw({
       storage: s,
       userId: 'coach-me',
@@ -142,13 +142,20 @@ describe('leaveToDraw', () => {
     expect(outcome).toBe('left')
     const entry = JSON.parse(s.map.get(AUTHORING_STASH_KEY)!)
     expect(entry).toEqual({ token: 'tok-1', userId: 'coach-me', host: 'planner', id: 'session-1', draft })
-    expect(navigate).toHaveBeenCalledExactlyOnceWith(
-      `/drill/d-new/diagram?${RETURN_PARAM}=${encodeURIComponent(`/planner?sessionId=session-1&${DRAFT_PARAM}=tok-1`)}`,
-    )
+    // Two navigations in order: the entry the coach stands on is REPLACED
+    // with the tokenised return address, then the Drill Maker is pushed on
+    // top, so the system Back gesture and the in page Back both arrive with
+    // the token. A push alone left the bare host beneath, and popping to it
+    // took nothing and lost the plan.
+    const returnTo = `/planner?sessionId=session-1&${DRAFT_PARAM}=tok-1`
+    expect(navigate.mock.calls).toEqual([
+      [returnTo, { replace: true }],
+      [`/drill/d-new/diagram?${RETURN_PARAM}=${encodeURIComponent(returnTo)}`],
+    ])
   })
 
   it('never navigates when the draft could not be stashed, and names the failure', () => {
-    const navigate = vi.fn<(to: string) => void>()
+    const navigate = vi.fn<(to: string, options?: { replace: boolean }) => void>()
     const outcome = leaveToDraw({
       storage: null,
       userId: 'coach-me',
@@ -167,7 +174,7 @@ describe('leaveToDraw', () => {
 
   it('stashes nothing and goes nowhere without a signed in user', () => {
     const s = storage()
-    const navigate = vi.fn<(to: string) => void>()
+    const navigate = vi.fn<(to: string, options?: { replace: boolean }) => void>()
     expect(
       leaveToDraw({
         storage: s,

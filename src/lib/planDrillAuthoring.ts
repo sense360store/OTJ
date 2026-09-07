@@ -84,6 +84,15 @@ export const STASH_FAILED_NOTE =
 // first and the navigation happens ONLY if it landed: a navigation without
 // the stash would lose the plan, which is the one outcome this flow
 // exists to prevent. Both hosts call this with their own draft shape.
+//
+// TWO NAVIGATIONS, AND THE ORDER IS THE POINT. The history entry the coach
+// is standing on is REPLACED with the tokenised return address before the
+// Drill Maker is pushed on top of it. The Drill Maker's own Back button
+// pushes the return address, but a coach on a phone uses the system Back
+// gesture as often as any button, and that pops to whatever entry sits
+// beneath: left as the bare `/planner`, the host remounted with no token,
+// took nothing, and the plan was gone while its stash sat unread. With the
+// entry beneath tokenised, both ways back arrive with the token.
 export function leaveToDraw<D>({
   storage,
   userId,
@@ -103,12 +112,15 @@ export function leaveToDraw<D>({
   // The host's own address, without the token; the token is appended here.
   returnPath: string
   drillId: string
-  navigate: (to: string) => void
+  // The router's navigate: a push by default, a replace when asked.
+  navigate: (to: string, options?: { replace: boolean }) => void
   token: string
 }): 'left' | 'stash_failed' {
   if (!userId) return 'stash_failed'
   const stashed = stashDraft(storage, { token, userId, host, id, draft })
   if (!stashed) return 'stash_failed'
-  navigate(drawPath(drillId, withDraftToken(returnPath, token)))
+  const returnTo = withDraftToken(returnPath, token)
+  navigate(returnTo, { replace: true })
+  navigate(drawPath(drillId, returnTo))
   return 'left'
 }

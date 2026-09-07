@@ -302,7 +302,12 @@ export function ActivityCardView({
                   {act.phase}
                 </span>
               </div>
-              {onTurnIntoDrill && !readOnly && (
+              {/* On the activity's OWN shape, never on the resolved drill: a
+                  row whose drill was deleted resolves to no drill and takes
+                  this branch, and it is a drill row still, which the plan
+                  rules refuse to replace. Offering the button there created
+                  a library drill that reached no plan. */}
+              {onTurnIntoDrill && !readOnly && !act.drillId && (
                 <TurnIntoDrillButton disabled={busy} onClick={onTurnIntoDrill} />
               )}
             </div>
