@@ -382,6 +382,24 @@ export type HarnessState =
   | 'novenues'
   | 'nolayouts'
   | 'noagegroups'
+  /* ---- Sessions (VISUAL-02) ---------------------------------------------
+     The club calendar reads the same sessions, teams and venues Home does,
+     so it shares Home's schedule fixtures and most of Home's state names
+     (`nosessions`, `nothingscheduled`, `endedtoday`, `live`, `longnames`,
+     `noteam`), each proved by what SESSIONS renders for it. The stub answers
+     them only while Home or Sessions is the mounted screen, so Players, the
+     admin screens and the Teams removal dialog keep reading exactly what
+     they always read. Two are its own, because "the sessions read has not
+     answered" is named for the screen it gates, and one is a parent scope
+     Home never shows. */
+  // The sessions read has not answered, and has failed: the page level gate.
+  | 'sessionsloading'
+  | 'sessionserror'
+  // A parent on ONE of the club's teams: the My team and All club chips,
+  // and a schedule narrowed to that team plus the club's own sessions. The
+  // default parent is on every team, which is the one shape that renders no
+  // toggle at all.
+  | 'myteam'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 

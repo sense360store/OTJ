@@ -56,7 +56,7 @@ Query string, all optional:
 | `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin`, `planner`, `clubadmin`, `author` (a coach who also holds `drills.create`, for the COACH-11 authoring surfaces) |
 | `theme` | `light` (default), `dark` |
 | `auth` | `signedin` (default), `signedout` (the default for `screen=login`), `needspassword`, `authloading` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning`, `adminloading`, `adminerror`, `noteams`, `gridloading`, `gridunavailable`, `lastadmin`, `statesunknown`, `orderunset`, `orderincomplete`, `homeloading`, `homeerror`, `nosessions`, `nothingscheduled`, `quietweek`, `endedtoday`, `live`, `nocontent`, `noteam`, `novenues`, `nolayouts`, `noagegroups` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning`, `adminloading`, `adminerror`, `noteams`, `gridloading`, `gridunavailable`, `lastadmin`, `statesunknown`, `orderunset`, `orderincomplete`, `homeloading`, `homeerror`, `nosessions`, `nothingscheduled`, `quietweek`, `endedtoday`, `live`, `nocontent`, `noteam`, `novenues`, `nolayouts`, `noagegroups`, `sessionsloading`, `sessionserror`, `myteam` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
@@ -372,10 +372,11 @@ product; see below.)
 Its reads are the sessions, drills and templates every other harness screen
 reads, so its states are NAMED for Home and the stub answers them only while
 Home is the mounted screen, the same branch `useProfiles` takes for the Users
-screen: making `loading` hold the sessions read would move Sessions, Players
-and the admin screens, and the Teams removal dialog counts sessions per team.
-Off Home every read answers exactly what it always answered, so no other
-screen's shot moves. On Home the default club gains one venue on the first
+screen: making `loading` hold the sessions read would move Players and the
+admin screens, and the Teams removal dialog counts sessions per team. Since
+the Sessions slice the calendar reads the same schedule fixtures and most of
+the same state names (see Sessions below); off those two screens every read
+answers exactly what it always answered, so no other screen's shot moves. On Home the default club gains one venue on the first
 session, one template in What's new, an adaptation on each drill and one
 past night on a team no admin entry counts, which is what gives the parent
 dashboard a Last session, a Practice at home and a programme to render.
@@ -408,6 +409,43 @@ The `endedtoday` fixture starts at one minute past midnight for ten minutes,
 so it has ended whenever the harness is opened after ten past midnight local
 time; inside those ten minutes the state's proof fails honestly rather than
 photographing a session that is still running.
+
+## Sessions
+
+The club calendar, at `/sessions`. Three capability variants render it and
+all three are shot at every width: `coach` (the filters, New session, Edit
+plan and Start on their own nights, View plan and Watch on another coach's,
+Delete on their own), `viewer` (`players.view` alone, so no coaching write:
+Session day, Watch and Add to calendar, the two lifecycle chips and nothing
+else) and `parent` (the same controls, with the schedule scoped to their
+team). The capability matrix itself is pinned in
+`src/routes/sessions.screens.test.tsx`; what the harness measures is the
+presentation: one `h1`, an `h2` per card, hit areas, the labelled team
+filter, the shared ring, the dialog's focus contract, and the shape of each
+state.
+
+It reads the same sessions, teams and venues Home reads, so it answers from
+the same schedule fixtures and most of the same state names, each proved by
+what SESSIONS renders for it: `nosessions` is the Empty primitive telling a
+coach to plan a first session (a parent that the club calendar is empty);
+`nothingscheduled` is a club whose every session is past, so Upcoming is
+empty and the note offers Past rather than claiming the club has never
+trained; `endedtoday` is the ended Badge on a card that is still listed
+under Upcoming; `live` is the session being driven, an hour past its start,
+still an Upcoming card dated today (Sessions draws no live cue of its own,
+which the roadmap records); `longnames` is the long session name as a card
+heading with the long focus, venue and team names in its pills; `noteam` is
+the parent's info Note above the club schedule. Three are its own:
+`sessionsloading` and `sessionserror` are the page level gate and the failed
+read, named for the screen they gate, and `myteam` is a parent on ONE team,
+which is the shape that renders the My team and All club chips and narrows
+the list; the default parent is on every team and gets no toggle. The Past
+view is a press rather than a state: `open=past` in `shoot.mjs` presses the
+chip and waits for the finished card, and `contrast.mjs` does the same
+before measuring it.
+
+The `endedtoday` fixture is the same one Home uses and has the same honest
+gap inside the first ten minutes after midnight.
 
 ## Admin Users and Admin Teams
 

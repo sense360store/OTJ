@@ -3,6 +3,16 @@
 // defaults to your own, and team narrows further. Edit and delete follow
 // ownership (own, or admin); other coaches' sessions render read-only with
 // the owner's name. The sessions RLS enforces the same rules on write.
+//
+// VISUAL-02 brought it onto the shared system: PageHeader for the heading,
+// Button and IconButton for every hand written class string, Card for each
+// session, Badge for the one status a card carries, a labelled SelectField
+// for the team filter, and the type and spacing scales for everything that
+// was an inline size, in Sessions.css. Nothing about what the screen decides
+// moved: which rows a capability set sees, which controls it is offered,
+// how the parent scope narrows and where each control navigates are exactly
+// what they were, and src/routes/sessions.screens.test.tsx pins them
+// against the real screen.
 import { useState } from 'react'
 import { ALL_EVENTS_LABEL, TRAINING_LABEL } from '../lib/eventKind'
 import {
@@ -11,7 +21,12 @@ import {
   type EventFilterState,
   orderEventsForScope,
 } from '../lib/eventFilter'
-import { isSessionEndedToday, LIFECYCLE_SCOPE_LABELS, matchesLifecycleScope } from '../lib/sessionLifecycle'
+import {
+  ENDED_TODAY_LABEL,
+  isSessionEndedToday,
+  LIFECYCLE_SCOPE_LABELS,
+  matchesLifecycleScope,
+} from '../lib/sessionLifecycle'
 import { emptyEventListNote, NO_PAST_SESSIONS_NOTE } from '../lib/sessionEmptyState'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
@@ -36,10 +51,12 @@ import {
 } from '../lib/sessionTeams'
 import { Icon } from '../components/icons'
 import { Chip, Empty, ErrorNote, fmtDate, Loading, PHASE_COLOR } from '../components/ui'
+import { Badge, Button, Card, IconButton, PageHeader, SelectField } from '../components/primitives'
 import { DeleteSessionModal } from '../components/DeleteSessionModal'
 import { PlanFromSpond } from '../components/PlanFromSpond'
 import { NoTeamNote } from './ParentHome'
 import { downloadSessionIcs } from '../lib/ics'
+import './Sessions.css'
 
 type Nav = ReturnType<typeof useNav>
 
@@ -73,122 +90,102 @@ function SessionCard({
   onDelete: () => void
 }) {
   const mins = sessionMinutes(s)
+  // The plan bar in words, for a reader who cannot see its phase colours:
+  // the same facts the segments draw, in the same order.
+  const planLabel = s.activities.map((a) => `${a.phase} ${a.duration} min`).join(', ')
   return (
-    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="spread">
-        <div>
-          <div className="row" style={{ gap: 8, marginBottom: 6 }}>
-            <span
-              className="pill"
-              style={{ color: 'var(--royal)', background: 'color-mix(in srgb, var(--royal) 10%, transparent)' }}
-            >
-              <Icon.calendar />
+    <Card className="session-card">
+      <div className="sc-head">
+        <div className="sc-title">
+          <div className="sc-when">
+            <span className="pill sc-date">
+              <Icon.calendar aria-hidden="true" />
               {fmtDate(s.date)}
             </span>
             <span className="pill">
-              <Icon.clock />
+              <Icon.clock aria-hidden="true" />
               {s.time}
             </span>
-            {ended && (
-              <span
-                className="pill"
-                style={{ color: 'var(--ink)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
-              >
-                Ended earlier today
-              </span>
-            )}
+            {/* A state of the row is a dot plus a word (2.7), and the same
+                Badge and the same words Home's week list carries. */}
+            {ended && <Badge>{ENDED_TODAY_LABEL}</Badge>}
           </div>
-          <h3 style={{ fontSize: 19 }}>{s.name}</h3>
-          <div style={{ color: 'var(--ink-2)', fontWeight: 700, fontSize: 'var(--text-base)', marginTop: 2 }}>{s.focus}</div>
+          {/* The card's heading sits one level under the page's h1. */}
+          <h2>{s.name}</h2>
+          {s.focus && <p className="sc-focus">{s.focus}</p>}
         </div>
-        <div className="avatar" style={{ background: 'var(--bg-2)', color: 'var(--royal)', fontSize: 13 }}>
-          {s.ageGroup}
-        </div>
+        <span className="avatar sc-age">{s.ageGroup}</span>
       </div>
 
-      <div className="row wrap" style={{ gap: 7 }}>
+      <div className="sc-meta">
         {venueName && (
           <span className="pill">
-            <Icon.pin />
+            <Icon.pin aria-hidden="true" />
             {venueName}
           </span>
         )}
         {teamName && (
           <span className="pill">
-            <Icon.flag />
+            <Icon.flag aria-hidden="true" />
             {teamName}
           </span>
         )}
         <span className="pill">
-          <Icon.list />
+          <Icon.list aria-hidden="true" />
           {s.activities.length} activities
         </span>
         <span className="pill">
-          <Icon.clock />
+          <Icon.clock aria-hidden="true" />
           {mins} min
         </span>
         {ownerName && (
           <span className="pill">
-            <Icon.user />
+            <Icon.user aria-hidden="true" />
             {ownerName}
           </span>
         )}
       </div>
 
-      {/* mini timeline */}
-      <div style={{ display: 'flex', gap: 3, height: 7, borderRadius: 4, overflow: 'hidden' }}>
-        {s.activities.map((a, i) => (
-          <div key={i} title={a.phase} style={{ flex: a.duration, background: PHASE_COLOR[a.phase] }}></div>
-        ))}
-      </div>
+      {/* The plan at a glance. Each segment's share and hue are the row's
+          own data (its minutes and its phase), which is the one inline
+          style the card writes, the way a bib swatch writes its colour. */}
+      {s.activities.length > 0 && (
+        <div className="sc-timeline" role="img" aria-label={`Plan: ${planLabel}`}>
+          {s.activities.map((a, i) => (
+            <span key={i} title={a.phase} style={{ flex: a.duration, background: PHASE_COLOR[a.phase] }}></span>
+          ))}
+        </div>
+      )}
 
-      <div className="row" style={{ gap: 9 }}>
-        <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => nav('sessionDay', { sessionId: s.id })}>
-          <Icon.cone />
+      <div className="sc-acts">
+        <Button variant="primary" icon={Icon.cone} onClick={() => nav('sessionDay', { sessionId: s.id })}>
           Session day
-        </button>
+        </Button>
         {/* Driving is owner or admin; everyone else opens the same live view
             as a watcher, so the label says what will happen. */}
-        <button className="btn btn-gold" style={{ flex: 1 }} onClick={() => nav('live', { sessionId: s.id })}>
-          {canManage ? <Icon.play /> : <Icon.eye />}
+        <Button variant="gold" icon={canManage ? Icon.play : Icon.eye} onClick={() => nav('live', { sessionId: s.id })}>
           {canManage ? 'Start' : 'Watch'}
-        </button>
+        </Button>
       </div>
-      <div className="row" style={{ gap: 9 }}>
+      <div className="sc-acts">
         {canManage ? (
-          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => nav('planner', { sessionId: s.id })}>
-            <Icon.edit />
+          <Button variant="ghost" icon={Icon.edit} onClick={() => nav('planner', { sessionId: s.id })}>
             Edit plan
-          </button>
+          </Button>
         ) : coaching ? (
-          <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => nav('planner', { sessionId: s.id })}>
-            <Icon.eye />
+          <Button variant="ghost" icon={Icon.eye} onClick={() => nav('planner', { sessionId: s.id })}>
             View plan
-          </button>
+          </Button>
         ) : (
-          <span style={{ flex: 1 }}></span>
+          <span className="sc-spacer"></span>
         )}
-        <button
-          className="btn btn-ghost btn-sm icon-only"
-          style={{ width: 38, padding: 0, alignSelf: 'stretch', height: 'auto' }}
-          aria-label="Add to calendar"
-          title="Add to calendar"
-          onClick={() => downloadSessionIcs(s, venueName)}
-        >
-          <Icon.calendar />
-        </button>
-        {canManage && (
-          <button
-            className="btn btn-ghost btn-sm icon-only"
-            style={{ width: 38, padding: 0, alignSelf: 'stretch', height: 'auto' }}
-            aria-label="Delete session"
-            onClick={onDelete}
-          >
-            <Icon.trash />
-          </button>
-        )}
+        {/* Icon only controls are named by aria-label, never by title, which
+            does not survive touch (2.5). `large` gives each the 44px box of
+            the buttons beside it. */}
+        <IconButton label="Add to calendar" icon={Icon.calendar} large onClick={() => downloadSessionIcs(s, venueName)} />
+        {canManage && <IconButton label="Delete session" icon={Icon.trash} tone="danger" large onClick={onDelete} />}
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -288,28 +285,27 @@ export function Sessions() {
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <h1>Sessions</h1>
-          <div className="sub">
-            {canPlan
-              ? `Training coming up across the club, including today's after it has finished. All events widens to fixtures, galas and the rest; ${LIFECYCLE_SCOPE_LABELS.past} holds earlier days.`
-              : hasTeam
-                ? "Your team's training nights."
-                : 'Training nights across the club.'}
-          </div>
-        </div>
-        {canPlan && (
-          <button className="btn btn-primary" onClick={() => nav('planner')}>
-            <Icon.plus />
-            New session
-          </button>
-        )}
-      </div>
+      <PageHeader
+        title="Sessions"
+        sub={
+          canPlan
+            ? `Training coming up across the club, including today's after it has finished. All events widens to fixtures, galas and the rest; ${LIFECYCLE_SCOPE_LABELS.past} holds earlier days.`
+            : hasTeam
+              ? "Your team's training nights."
+              : 'Training nights across the club.'
+        }
+        actions={
+          canPlan && (
+            <Button variant="primary" icon={Icon.plus} onClick={() => nav('planner')}>
+              New session
+            </Button>
+          )
+        }
+      />
 
       {!canPlan && !hasTeam && <NoTeamNote />}
 
-      <div className="filter-row" style={{ marginBottom: 18 }}>
+      <div className="filter-row sessions-filters">
         {canPlan ? (
           <>
             <Chip on={filter.kind === 'training'} onClick={() => setFilter((f) => ({ ...f, kind: 'training' }))}>
@@ -342,7 +338,15 @@ export function Sessions() {
         </Chip>
         {canPlan && (
           <>
-            <select className="select" value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ height: 40 }}>
+            {/* A real <label>, read and not shown: the control's own value
+                says which team, and the row is chips rather than a form. */}
+            <SelectField
+              label="Team"
+              labelHidden
+              className="field-flush sessions-team"
+              value={teamId}
+              onChange={(e) => setTeamId(e.target.value)}
+            >
               <option value="">All teams</option>
               <option value="club">Club</option>
               {teams.map((t) => (
@@ -350,7 +354,7 @@ export function Sessions() {
                   {t.name}
                 </option>
               ))}
-            </select>
+            </SelectField>
             {/* Ownership, deliberately last and off by default. */}
             <Chip on={filter.mine} onClick={() => setFilter((f) => ({ ...f, mine: !f.mine }))}>
               Mine
@@ -394,7 +398,7 @@ export function Sessions() {
                   : 'Nothing on the club calendar yet.'}
         </Empty>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(330px,1fr))', gap: 18 }}>
+        <div className="sessions-grid">
           {list.map((s) => {
             const mine = s.coachId === user?.id
             return (

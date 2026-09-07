@@ -4759,6 +4759,275 @@ const focusReturned = async (page, d) => {
   }
 }
 
+/* ---- VISUAL-02: Sessions ------------------------------------------------
+   The club calendar, measured rather than read. What this slice changed is
+   presentation, so the claims are computed styles, hit areas, keyboard
+   paths and the shape of each state; the capability matrix, the parent
+   scope and the destinations are pinned in
+   src/routes/sessions.screens.test.tsx, and one destination is proved here
+   from the harness's route witness. */
+{
+  /* ---- the page's own structure, in every capability variant ---- */
+  for (const caps of ['coach', 'viewer', 'parent']) {
+    const page = await open('sessions', 390, { caps })
+    const r = await page.evaluate(() => ({
+      h1: [...document.querySelectorAll('h1')].map((e) => e.textContent),
+      cards: document.querySelectorAll('.session-card').length,
+      // Every card's heading is one level under the page title.
+      h2: document.querySelectorAll('.session-card > .sc-head h2').length,
+      h3: document.querySelectorAll('.content h3').length,
+      // The one inline style the card writes is a plan segment's own share
+      // and hue, which is data rather than a size or a step.
+      inline: [...document.querySelectorAll('.content [style]')].filter((e) => !e.matches('.sc-timeline > span')).length,
+      // The team filter's control is a real <label>, read and not shown.
+      teamLabel: (() => {
+        const sel = document.querySelector('.sessions-team select')
+        if (!sel) return 'absent'
+        const label = document.querySelector(`label[for="${sel.id}"]`)
+        return label ? `${label.textContent}/${label.className}` : 'unlabelled'
+      })(),
+      newSession: [...document.querySelectorAll('.page-head-acts .btn')].map((b) => b.textContent),
+    }))
+    const coaching = caps === 'coach'
+    check(`${caps} sessions: one h1, an h2 per card, no h3, no inline style outside the plan bar`,
+      r.h1.length === 1 && r.h1[0] === 'Sessions' && r.cards > 0 && r.h2 === r.cards && r.h3 === 0 && r.inline === 0, JSON.stringify(r))
+    check(`${caps} sessions: the team filter is ${coaching ? 'a labelled select' : 'absent'}, and New session is ${coaching ? 'the one header action' : 'absent'}`,
+      coaching ? r.teamLabel === 'Team/sr-only' && r.newSession.join() === 'New session' : r.teamLabel === 'absent' && r.newSession.length === 0,
+      JSON.stringify({ teamLabel: r.teamLabel, newSession: r.newSession }))
+    await page.close()
+  }
+
+  /* ---- hit areas: every control the coach is offered, at 360 ---- */
+  {
+    const page = await open('sessions', 360, { caps: 'coach' })
+    const r = await page.evaluate(() => {
+      const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+      const hit = (el) => {
+        const b = el.getBoundingClientRect()
+        const a = getComputedStyle(el, '::after')
+        const h = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+        const w = a.content === 'none' ? b.width : Math.max(b.width, px(a.width))
+        return { h: Math.round(h), w: Math.round(w) }
+      }
+      const short = []
+      for (const [label, sel] of [
+        ['header action', '.page-head-acts .btn'],
+        ['filter chip', '.sessions-filters .chip'],
+        ['team select', '.sessions-team select'],
+        ['card button', '.sc-acts .btn'],
+        ['card icon button', '.sc-acts .icon-btn'],
+      ]) {
+        const els = [...document.querySelectorAll(sel)]
+        if (els.length === 0) short.push(`${label}: none on the page`)
+        for (const el of els) {
+          const { h, w } = hit(el)
+          if (h < 44 || w < 44) short.push(`${label} ${h}x${w}`)
+        }
+      }
+      return short
+    })
+    check('every control on Sessions reaches a 44px hit area at 360', r.length === 0, r.join(', '))
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    check('Sessions does not scroll sideways at 360', over <= 0, `${over}px over`)
+    // The two icon only controls in a card are named, and named by aria-label
+    // rather than title, which does not survive touch.
+    const names = await page.evaluate(() =>
+      [...document.querySelectorAll('.session-card .icon-btn')].map((b) => `${b.getAttribute('aria-label')}${b.hasAttribute('title') ? '+title' : ''}`),
+    )
+    check('every icon only control on a card is named by aria-label alone',
+      names.length > 0 && names.every((n) => (n === 'Add to calendar' || n === 'Delete session')), JSON.stringify(names))
+    await page.close()
+  }
+
+  /* ---- the filters are pressed and chosen, and the list follows ----
+     Each press is followed by a wait on the LIST, never on the clock. */
+  {
+    const page = await open('sessions', 390, { caps: 'coach' })
+    const names = () => page.evaluate(() => [...document.querySelectorAll('.session-card h2')].map((h) => h.textContent))
+    const before = await names()
+    check('the coach opens on four upcoming training nights', before.length === 4 && !before.includes('Gladiators last week'), JSON.stringify(before))
+    if (await pressed(page.getByRole('button', { name: 'Past', exact: true }), 'Past is pressed')) {
+      await page.locator('.session-card h2', { hasText: 'Gladiators last week' }).waitFor({ timeout: 3000 }).catch(() => {})
+      const r = await page.evaluate(() => ({
+        pressed: [...document.querySelectorAll('.chip[aria-pressed="true"]')].map((c) => c.textContent),
+        names: [...document.querySelectorAll('.session-card h2')].map((h) => h.textContent),
+      }))
+      check('Past shows the one finished night and says it is pressed',
+        r.pressed.includes('Past') && !r.pressed.includes('Upcoming') && r.names.join() === 'Gladiators last week', JSON.stringify(r))
+    }
+    if (await pressed(page.getByRole('button', { name: 'Upcoming', exact: true }), 'Upcoming is pressed again')) {
+      await page.locator('.session-card').nth(3).waitFor({ timeout: 3000 }).catch(() => {})
+    }
+    if (await pressed(page.getByRole('button', { name: 'Mine', exact: true }), 'Mine is pressed')) {
+      await page.waitForFunction(() => document.querySelectorAll('.session-card').length === 2, null, { timeout: 3000 }).catch(() => {})
+      const r = await page.evaluate(() => ({
+        pressed: document.querySelector('.sessions-filters .chip:last-child')?.getAttribute('aria-pressed'),
+        names: [...document.querySelectorAll('.session-card h2')].map((h) => h.textContent),
+      }))
+      // Two of the four upcoming nights are the signed in coach's own.
+      check('Mine narrows the list to the coach\'s own two nights and says so',
+        r.pressed === 'true' && r.names.join() === 'Titans Tuesday,Gladiators Saturday practice', JSON.stringify(r))
+      await pressed(page.getByRole('button', { name: 'Mine', exact: true }), 'Mine is released')
+      await page.waitForFunction(() => document.querySelectorAll('.session-card').length === 4, null, { timeout: 3000 }).catch(() => {})
+    }
+    if (await chose(page.getByLabel('Team', { exact: true }), 'trojans', 'Trojans is chosen in the team filter')) {
+      await page.waitForFunction(() => document.querySelectorAll('.session-card').length === 1, null, { timeout: 3000 }).catch(() => {})
+      const r = await names()
+      check('choosing a team narrows the list to that team\'s nights', r.join() === 'Trojans Thursday', JSON.stringify(r))
+    }
+    await page.close()
+  }
+
+  /* ---- the read only variants offer Watch, never Start or a planner link ---- */
+  for (const caps of ['viewer', 'parent']) {
+    const page = await open('sessions', 390, { caps })
+    const r = await page.evaluate(() => ({
+      labels: [...new Set([...document.querySelectorAll('.sc-acts .btn')].map((b) => b.textContent))].sort(),
+      icons: [...new Set([...document.querySelectorAll('.sc-acts .icon-btn')].map((b) => b.getAttribute('aria-label')))],
+      chips: [...document.querySelectorAll('.sessions-filters .chip')].map((c) => c.textContent),
+    }))
+    check(`${caps} sessions: Session day and Watch only, Add to calendar only, and the two lifecycle chips`,
+      r.labels.join() === 'Session day,Watch' && r.icons.join() === 'Add to calendar' && r.chips.join() === 'Upcoming,Past', JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- keyboard: a card's first action opens Session day, and draws the shared ring ---- */
+  {
+    const page = await open('sessions', 1280, { caps: 'coach' })
+    if (await focused(page.locator('.session-card .btn-primary').first(), 'the Session day button takes focus')) {
+      const ring = await page.evaluate(() => {
+        const cs = getComputedStyle(document.activeElement)
+        return { width: cs.outlineWidth, colour: cs.outlineColor, offset: cs.outlineOffset }
+      })
+      check('a focused card action draws the shared ring', ring.width === '2px' && ring.colour === 'rgb(31, 67, 214)' && ring.offset === '2px', JSON.stringify(ring))
+      await page.keyboard.press('Enter')
+      await page.waitForFunction(() => document.querySelector('.content')?.getAttribute('data-path') !== '/sessions', null, { timeout: 3000 }).catch(() => {})
+      const after = await page.evaluate(() => document.querySelector('.content')?.getAttribute('data-path') ?? 'gone')
+      check('Enter on a focused Session day button opens session day', /^\/session-day\//.test(after), after)
+    }
+    await page.close()
+  }
+
+  /* ---- the delete dialog opens from the card and returns focus to its trigger ---- */
+  {
+    const page = await open('sessions', 1280, { caps: 'coach' })
+    const trigger = page.getByRole('button', { name: 'Delete session', exact: true }).first()
+    if (await pressed(trigger, 'Delete session is pressed')) {
+      const opened = await page.locator('.modal').waitFor({ timeout: 3000 }).then(() => true, () => false)
+      const r = await page.evaluate(() => ({
+        title: document.querySelector('.modal h3, .modal h2')?.textContent ?? '',
+        danger: !!document.querySelector('.modal .btn-danger'),
+        inside: !!document.querySelector('.modal')?.contains(document.activeElement),
+      }))
+      check('Delete opens the dialog with a danger confirm and moves focus into it', opened && r.danger && r.inside && /Delete/.test(r.title), JSON.stringify(r))
+      await page.keyboard.press('Escape')
+      await page.waitForFunction(() => !document.querySelector('.modal'), null, { timeout: 3000 }).catch(() => {})
+      const back = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName)
+      check('Escape closes the dialog and returns focus to the Delete control', back === 'Delete session', String(back))
+    }
+    await page.close()
+  }
+
+  /* ---- the ended Badge is a dot plus a word, on a card that is still listed ---- */
+  {
+    const page = await open('sessions', 390, { caps: 'coach', state: 'endedtoday' })
+    const r = await page.evaluate(() => {
+      const card = [...document.querySelectorAll('.session-card')].find((c) => c.querySelector('h2')?.textContent === 'Gladiators early session')
+      const b = card?.querySelector('.badge')
+      if (!b) return null
+      const dot = b.querySelector('.badge-dot')
+      return { word: b.textContent.trim(), dot: !!dot && getComputedStyle(dot).width === '8px' }
+    })
+    check('the ended card carries a Badge with a dot and the word', !!r && r.dot && r.word === 'Ended earlier today', JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- the parent's states: the no team Note, and the one team scope ---- */
+  {
+    const page = await open('sessions', 390, { caps: 'parent', state: 'noteam' })
+    const r = await page.evaluate(() => {
+      const n = document.querySelector('.content .note.note-info')
+      if (!n) return null
+      const svg = n.querySelector(':scope > svg')
+      return { glyph: !!svg && svg.getAttribute('aria-hidden') === 'true', title: n.querySelector('b')?.textContent, chips: document.querySelectorAll('.sessions-filters .chip').length }
+    })
+    check('a parent with no team gets the info Note with its glyph, and no scope toggle', !!r && r.glyph && r.title === 'No team set yet' && r.chips === 2, JSON.stringify(r))
+    await page.close()
+  }
+  {
+    const page = await open('sessions', 390, { caps: 'parent', state: 'myteam' })
+    const names = () => page.evaluate(() => [...document.querySelectorAll('.session-card h2')].map((h) => h.textContent))
+    const before = await names()
+    check('a parent on one team opens on that team\'s nights', before.includes('Titans Tuesday') && !before.includes('Trojans Thursday'), JSON.stringify(before))
+    if (await pressed(page.getByRole('button', { name: 'All club', exact: true }), 'All club is pressed')) {
+      await page.locator('.session-card h2', { hasText: 'Trojans Thursday' }).waitFor({ timeout: 3000 }).catch(() => {})
+      const r = await names()
+      check('All club widens the parent\'s schedule to every team', r.includes('Trojans Thursday') && r.includes('Titans Tuesday'), JSON.stringify(r))
+    }
+    await page.close()
+  }
+
+  /* ---- long strings, at the narrowest phone, for both variants ---- */
+  for (const caps of ['coach', 'parent']) {
+    const page = await open('sessions', 360, { caps, state: 'longnames' })
+    const r = await page.evaluate(() => {
+      const doc = document.documentElement
+      const wide = [...document.querySelectorAll('.content *')]
+        .filter((el) => el.getBoundingClientRect().right > doc.clientWidth + 1)
+        .map((el) => el.className || el.tagName)
+      return { page: doc.scrollWidth - doc.clientWidth, wide: [...new Set(wide)].slice(0, 4) }
+    })
+    check(`${caps} sessions: long strings push nothing past the 360 viewport`, r.page <= 0 && r.wide.length === 0, JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- the two read states ---- */
+  {
+    const loading = await open('sessions', 390, { caps: 'coach', state: 'sessionsloading' })
+    const l = await loading.evaluate(() => ({
+      spinner: !!document.querySelector('.content > .loading[role="status"] .spinner'),
+      h1: document.querySelectorAll('h1').length,
+    }))
+    check('sessions: the load is a labelled spinner and nothing else', l.spinner && l.h1 === 0, JSON.stringify(l))
+    await loading.close()
+    const failedRead = await open('sessions', 390, { caps: 'coach', state: 'sessionserror' })
+    const e = await failedRead.evaluate(() => {
+      const n = document.querySelector('.content > .state-error[role="alert"]')
+      return n ? { glyph: !!n.querySelector('svg'), border: getComputedStyle(n).borderTopColor, retry: !!n.querySelector('.btn') } : null
+    })
+    check('sessions: a failed read is the announced danger state with its glyph, and no Retry it cannot honour', !!e && e.glyph && e.border === 'rgb(198, 40, 40)' && !e.retry, JSON.stringify(e))
+    await failedRead.close()
+  }
+
+  /* ---- the empty schedule, both ways ---- */
+  {
+    const page = await open('sessions', 390, { caps: 'coach', state: 'nosessions' })
+    const r = await page.evaluate(() => ({
+      empty: !!document.querySelector('.content .empty svg'),
+      title: document.querySelector('.empty h3')?.textContent,
+      note: document.querySelector('.empty p')?.textContent ?? '',
+    }))
+    check('a club with no sessions is the Empty primitive with its glyph, telling the coach to plan one',
+      r.empty && r.title === 'No sessions here yet' && r.note.includes('Plan your first session'), JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- the dark theme: the date pill keeps a royal word on its tint ---- */
+  {
+    const page = await open('sessions', 1280, { caps: 'coach', theme: 'dark' })
+    const r = await page.evaluate(() => {
+      const d = document.querySelector('.session-card .sc-date')
+      const a = document.querySelector('.session-card .sc-age')
+      return d && a ? { date: getComputedStyle(d).color, age: getComputedStyle(a).color, ageGround: getComputedStyle(a).backgroundColor } : null
+    })
+    // --royal's dark value, which the design system invariant holds to 4.5:1
+    // on the card, on --bg and on --bg-2.
+    check('in the dark theme the date and age group take the dark royal, not the light one',
+      !!r && r.date === r.age && r.date !== 'rgb(31, 67, 214)', JSON.stringify(r))
+    await page.close()
+  }
+}
+
 /* ---- reduced motion ---- */
 {
   const page = await open('dialog', 1280, { reducedMotion: true })

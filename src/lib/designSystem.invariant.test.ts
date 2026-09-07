@@ -86,6 +86,11 @@ const OWNED_FILES = [
   'routes/AdminVenues.tsx',
   'routes/AdminVenueLayouts.tsx',
   'components/VenueLayoutPitch.tsx',
+  // VISUAL-02, Sessions: the club calendar. It carried five inline sizes
+  // and every step off the scale; the one inline style it writes now is a
+  // plan segment's own share and phase hue, which is data rather than a
+  // size or a step, and neither rule here reads it.
+  'routes/Sessions.tsx',
 ]
 
 
@@ -491,6 +496,10 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
     'routes/AdminVenues.tsx',
     'routes/AdminVenueLayouts.tsx',
     'components/VenueLayoutPitch.tsx',
+    // VISUAL-02, Sessions: the route and its new stylesheet, which is the
+    // first stylesheet the route has had; every step in it is on the scale.
+    'routes/Sessions.tsx',
+    'routes/Sessions.css',
   ]
 
   it('writes no inline margin, padding or gap outside the spacing scale', () => {
@@ -532,7 +541,7 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
     // The rule above used to name Login.css directly; now it reads the list,
     // a list with no stylesheet on it would pass with nothing measured.
     const sheets = SPACING_OWNED.filter((f) => f.endsWith('.css'))
-    for (const f of ['routes/Login.css', 'routes/Home.css', 'routes/ParentHome.css']) expect(sheets).toContain(f)
+    for (const f of ['routes/Login.css', 'routes/Home.css', 'routes/ParentHome.css', 'routes/Sessions.css']) expect(sheets).toContain(f)
   })
 
   it('covers every file this wave owns, so the list cannot quietly shrink', () => {
@@ -554,6 +563,8 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
       'routes/AdminVenues.tsx',
       'routes/AdminVenueLayouts.tsx',
       'components/VenueLayoutPitch.tsx',
+      'routes/Sessions.tsx',
+      'routes/Sessions.css',
     ]) {
       expect(SPACING_OWNED, `${f} is covered`).toContain(f)
       expect(sourceFiles.map(rel), `${f} exists`).toContain(f)
