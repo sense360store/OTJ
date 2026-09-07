@@ -29,7 +29,7 @@ const printSpy = vi.fn()
 ;(globalThis as unknown as { document: unknown }).document = { title: '' }
 
 const { default: PublicShare } = await import('./PublicShare')
-const { PRINT_WARNING } = await import('../lib/publicShare')
+const { PRINT_WARNING, UNAVAILABLE_HEADING } = await import('../lib/publicShare')
 
 const SHARE_ID = '11111111-1111-1111-1111-111111111111'
 const SECRET = 'a'.repeat(43)
@@ -166,5 +166,119 @@ describe('public page print / Save as PDF', () => {
     const html = renderShare()
     expect(html).not.toContain('Jane Coach')
     expect(html).not.toContain('Print or Save as PDF')
+  })
+})
+
+// =====================================================================
+// The drawn diagram on the public page and on paper (DRILL-02b)
+// =====================================================================
+
+const DIAGRAM = {
+  surface: { kind: 'half_pitch', orientation: 'landscape' },
+  elements: [
+    { type: 'player', x: 0.5, y: 0.5, colour: 'blue', label: '9' },
+    { type: 'cone', x: 0.2, y: 0.3, colour: 'orange' },
+    { type: 'text', x: 0.5, y: 0.9, text: 'Press' },
+  ],
+}
+
+function sessionProjection(drill: Record<string, unknown> = {}) {
+  return {
+    snapshotVersion: 1,
+    kind: 'session',
+    displayTitle: 'Tuesday session',
+    focus: null,
+    ageGroup: 'U10s',
+    totalDuration: 15,
+    intentions: [],
+    space: null,
+    activities: [{ phase: 'Skill', duration: 15, drillRef: 'd1', customTitle: null }],
+    referencedDrills: [{
+      ref: 'd1', title: 'Rondo', summary: null, classification: null, skill: null, ages: [],
+      level: null, duration: 15, playerGuidance: null, area: null, equipment: [], setupNotes: null,
+      coachingPoints: [], easier: [], harder: [], theme: null, format: null,
+      sourceAttribution: null, mediaRefs: [],
+      ...drill,
+    }],
+    board: null,
+    media: [],
+    sourceAttribution: null,
+    snapshotAt: '2026-01-01T00:00:00.000Z',
+  }
+}
+
+describe('the public page draws a published diagram', () => {
+  beforeEach(() => {
+    ;(globalThis as unknown as { window: { location: { hash: string } } }).window.location.hash = `#${SECRET}`
+  })
+
+  it('renders a session drill’s diagram through the canonical renderer, inside the printable block', () => {
+    invokeResult = { data: { status: 'ok', snapshot: sessionProjection({ diagram: DIAGRAM }) }, error: null }
+    const html = renderShare()
+    expect(html).toContain('Rondo')
+    expect(html).toContain('public-diagram')
+    expect(html).toContain('dd-surface')
+    expect(html).toContain('role="img"')
+    expect(html).toContain('data-el="player"')
+    expect(html).toContain('data-el="cone"')
+    expect(html).toContain('Press')
+    // Still printable: the action is offered on the same page.
+    expect(html).toContain('Print or Save as PDF')
+  })
+
+  it('renders a standalone drill’s diagram the same way', () => {
+    invokeResult = {
+      data: {
+        status: 'ok',
+        snapshot: {
+          snapshotVersion: 1, kind: 'drill', title: 'Rondo', summary: null, classification: null,
+          skill: null, ages: [], level: null, duration: 15, playerGuidance: null, area: null,
+          equipment: [], setupNotes: null, coachingPoints: [], easier: [], harder: [], theme: null,
+          format: null, sourceAttribution: null, diagram: DIAGRAM, media: [],
+          snapshotAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      error: null,
+    }
+    const html = renderShare()
+    expect(html).toContain('dd-surface')
+    expect(html).toContain('data-el="text"')
+  })
+
+  it('renders a share frozen before DRILL-02b, with no diagram key, exactly as before: no diagram block', () => {
+    invokeResult = { data: { status: 'ok', snapshot: sessionProjection() }, error: null }
+    const html = renderShare()
+    expect(html).toContain('Rondo')
+    expect(html).not.toContain('dd-surface')
+    expect(html).not.toContain('public-diagram')
+    expect(html).toContain('Print or Save as PDF')
+  })
+
+  it('renders no diagram block for a drill whose published diagram is null', () => {
+    invokeResult = { data: { status: 'ok', snapshot: sessionProjection({ diagram: null }) }, error: null }
+    const html = renderShare()
+    expect(html).toContain('Rondo')
+    expect(html).not.toContain('dd-surface')
+  })
+
+  it('fails closed on a malformed or over wide diagram: the neutral state, nothing drawn, nothing to print', () => {
+    for (
+      const bad of [
+        { ...DIAGRAM, elements: [{ ...DIAGRAM.elements[0], id: 'player-1' }] },
+        { ...DIAGRAM, elements: [{ ...DIAGRAM.elements[0], playerId: 'p-secret' }] },
+        { ...DIAGRAM, elements: [{ type: 'hologram', x: 0.5, y: 0.5 }] },
+        { ...DIAGRAM, elements: [{ type: 'ball', x: Number.POSITIVE_INFINITY, y: 0.5 }] },
+        { ...DIAGRAM, version: 1 },
+        'a drawing',
+      ]
+    ) {
+      invokeResult = { data: { status: 'ok', snapshot: sessionProjection({ diagram: bad }) }, error: null }
+      const html = renderShare()
+      expect(html, JSON.stringify(bad)).not.toContain('Rondo')
+      expect(html).not.toContain('dd-surface')
+      expect(html).not.toContain('p-secret')
+      expect(html).not.toContain('Print or Save as PDF')
+      expect(html).toContain(UNAVAILABLE_HEADING)
+    }
   })
 })

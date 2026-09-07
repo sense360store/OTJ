@@ -40,6 +40,23 @@ export function canonicalUrl(kind: ShareKind, id: string, origin: string = curre
   return origin + canonicalPath(kind, id)
 }
 
+// The club link payload (COACH-9). A coach sending a session to another coach
+// sends EXACTLY this: the canonical protected URL, and the item's title twice,
+// as the sheet's title and as its text. It is built from three strings, so
+// nothing operational can be in it by construction: no player name, no bib,
+// no group, no game, no Spond reply, no venue and no time reach a share sheet
+// or a clipboard, because there is no field for any of them. The recipient
+// signs in and Row Level Security answers what they may see. The title is the
+// coach's own name for the item and is passed through untouched.
+export function clubLinkPayload(
+  kind: ShareKind,
+  id: string,
+  title: string,
+  origin: string = currentOrigin(),
+): SharePayload {
+  return { url: canonicalUrl(kind, id, origin), title, text: title }
+}
+
 // The deterministic outcome of a share attempt. 'shared' and 'copied' are
 // successes; 'cancelled' is the user dismissing the native sheet, a neutral
 // non-event; 'error' is a genuine failure the caller reports calmly.

@@ -200,6 +200,25 @@ jobs:
             --phase pre \
             --baseline-out "${RUNNER_TEMP}/content-sharing-state-baseline.json"
 
+      - name: Deploy read-content-share (verify_jwt = false)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # READ FIRST, deliberately. Both functions bundle their own copy of
+          # ../_shared/share.ts, and the read function's validator is the
+          # stricter reader of what the management function writes. Deployed
+          # the other way round, every share created or refreshed in the window
+          # between the two deploys can carry a key (DRILL-02b's `diagram`)
+          # that the previous read function's deny list refuses, and those
+          # links read as unavailable until the second deploy lands. The new
+          # read function accepts whatever the previous management function
+          # wrote, so this order has no such window.
+          # Explicitly anonymous. config.toml also declares verify_jwt=false; the
+          # flag is belt and braces and overwrites the prior unverified inline
+          # deployment. Packaged from disk: supabase/functions/read-content-share
+          # plus ../_shared/share.ts.
+          supabase functions deploy read-content-share --project-ref "${SUPABASE_PROJECT_ID}" --no-verify-jwt
+
       - name: Deploy manage-content-share (verify_jwt = true)
         shell: bash
         run: |
@@ -209,16 +228,6 @@ jobs:
           # supabase/functions/manage-content-share plus ../_shared/fa.ts and
           # ../_shared/share.ts, resolved from the import graph.
           supabase functions deploy manage-content-share --project-ref "${SUPABASE_PROJECT_ID}"
-
-      - name: Deploy read-content-share (verify_jwt = false)
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Explicitly anonymous. config.toml also declares verify_jwt=false; the
-          # flag is belt and braces and overwrites the prior unverified inline
-          # deployment. Packaged from disk: supabase/functions/read-content-share
-          # plus ../_shared/share.ts.
-          supabase functions deploy read-content-share --project-ref "${SUPABASE_PROJECT_ID}" --no-verify-jwt
 
       - name: Verify deployed inventory and JWT posture
         shell: bash

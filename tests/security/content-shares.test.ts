@@ -1760,3 +1760,72 @@ describe('content_share_expiry_cleanup', () => {
     expect(scalar(`select (snapshot is not null)::text from public.content_shares where id = ${sqlId(sActive)}`)).toBe('true')
   })
 })
+
+// =====================================================================
+// The drill diagram projection passes the database boundary unchanged
+// (DRILL-02b). The builders decide what a diagram looks like; the RPC and the
+// read function only carry it, so a published diagram reaches the anonymous
+// reader exactly as built, and a share frozen without one stays without one
+// until its owner refreshes it. No SQL changed for this and this is the proof
+// that none needed to.
+// =====================================================================
+describe('a published drill diagram round trips the lifecycle RPC and read_public_share', () => {
+  const DIAGRAM = {
+    surface: { kind: 'half_pitch', orientation: 'landscape' },
+    elements: [
+      { type: 'player', x: 0.5, y: 0.5, colour: 'blue', label: '9' },
+      { type: 'arrow', x1: 0.1, y1: 0.1, x2: 0.6, y2: 0.7, arrow: 'pass' },
+      { type: 'text', x: 0.5, y: 0.9, text: 'Press' },
+    ],
+  }
+
+  it('stores and returns a diagram exactly as the builder shaped it, with no element id', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const hash = randHash()
+    const shareId = await createDrillShare(coachOneId, drillId, hash, { ...drillSnapshot(), diagram: DIAGRAM })
+    const { data, error } = await readShare(shareId, hash)
+    expect(error).toBeNull()
+    const res = data as { status: string; snapshot: Record<string, unknown> }
+    expect(res.status).toBe('ok')
+    expect(res.snapshot.diagram).toEqual(DIAGRAM)
+    expect(JSON.stringify(res.snapshot.diagram)).not.toContain('"id"')
+  })
+
+  it('a share frozen without a diagram key keeps serving without one, and refresh is what replaces the copy', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const hash = randHash()
+    const frozen = drillSnapshot()
+    expect('diagram' in frozen).toBe(false)
+    const shareId = await createDrillShare(coachOneId, drillId, hash, frozen)
+    const before = (await readShare(shareId, hash)).data as { snapshot: Record<string, unknown> }
+    expect('diagram' in before.snapshot).toBe(false)
+
+    // The owner rebuilds the copy: the trusted function passes a fresh
+    // snapshot and the RPC stores it whole, secret unchanged.
+    const { error } = await rpc({
+      p_action: 'refresh', p_actor_id: coachOneId, p_share_id: shareId,
+      p_snapshot: { ...drillSnapshot(), diagram: DIAGRAM }, p_snapshot_version: 1,
+    })
+    expect(error).toBeNull()
+    const after = (await readShare(shareId, hash)).data as { status: string; snapshot: Record<string, unknown> }
+    expect(after.status).toBe('ok')
+    expect(after.snapshot.diagram).toEqual(DIAGRAM)
+  })
+
+  it('a session snapshot carries a referenced drill diagram through read_public_share', async () => {
+    await setKill(true)
+    const drillId = await makeDrill({ owner: coachOneId, rights: 'public_full' })
+    const sessionId = await makeSession({ owner: coachOneId, rights: 'public_full', drillIds: [drillId] })
+    const hash = randHash()
+    const snapshot = sessionSnapshotFor()
+    ;(snapshot.referencedDrills as Array<Record<string, unknown>>)[0].diagram = DIAGRAM
+    const create = await createSessionShare(coachOneId, sessionId, hash, snapshot)
+    expect(create.error).toBeNull()
+    const shareId = (create.data as { share_id: string }).share_id
+    const res = (await readShare(shareId, hash)).data as { status: string; snapshot: { referencedDrills: Array<Record<string, unknown>> } }
+    expect(res.status).toBe('ok')
+    expect(res.snapshot.referencedDrills[0].diagram).toEqual(DIAGRAM)
+  })
+})
