@@ -312,27 +312,41 @@ describe('venue layouts row level security', () => {
     expect(deleteErr).toBeNull()
     expect(deleted).toHaveLength(1)
 
+    // Compared as a set: the three requests are seconds apart in one order
+    // and the assertion is about WHICH events exist, not about clock order.
     const rows = runSqlInContainer(
       `select action || '|' || coalesce(array_to_string(changed_fields, ','), '') || '|' || (safe_changes is null)::text || '|' || (metadata is null)::text || '|' || source || '|' || coalesce(actor_id::text, '')
          from public.audit_events
         where entity_type = 'venue_layout' and entity_id = '${layoutId}'
-        order by occurred_at, action;`,
+        order by action;`,
     )
       .trim()
       .split('\n')
-    expect(rows).toEqual([
-      `venue_layout.created||true|true|manual|${adminId}`,
-      `venue_layout.deleted||true|true|manual|${adminId}`,
-      `venue_layout.updated|zones|true|true|manual|${adminId}`,
-    ])
+      .sort()
+    expect(rows).toEqual(
+      [
+        `venue_layout.created||true|true|manual|${adminId}`,
+        `venue_layout.deleted||true|true|manual|${adminId}`,
+        `venue_layout.updated|zones|true|true|manual|${adminId}`,
+      ].sort(),
+    )
   })
 
   it('the trigger function is not callable through the API by anyone', async () => {
+    // PostgREST does not expose a function returning trigger at all, so the
+    // call fails to resolve (PGRST202) before any privilege is consulted;
+    // the privilege itself is asserted directly, because that is the fact
+    // the migration revokes and the one a future PostgREST could expose.
     for (const client of [admin, coachOne, parent]) {
       const { error } = await client.rpc('audit_venue_layouts')
       expect(error).not.toBeNull()
-      expect(error!.code).toBe('42501')
+      expect(['PGRST202', '42501']).toContain(error!.code)
     }
+    const privileges = runSqlInContainer(
+      `select has_function_privilege('anon', 'public.audit_venue_layouts()', 'EXECUTE')::text
+           || ',' || has_function_privilege('authenticated', 'public.audit_venue_layouts()', 'EXECUTE')::text;`,
+    ).trim()
+    expect(privileges).toBe('false,false')
   })
 
   // ---- the references -----------------------------------------------------
