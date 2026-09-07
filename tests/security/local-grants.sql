@@ -162,3 +162,12 @@ grant select, insert, update, delete on public.spond_event_responses to authenti
 revoke execute on function public.player_deletion_counts(uuid, uuid[]) from anon, authenticated;
 revoke execute on function public.preview_delete_players(uuid[])       from anon;
 revoke execute on function public.delete_players(uuid[], int)          from anon;
+
+-- 0053 venue layouts. The table is created with explicit grants (anon
+-- nothing, authenticated the four verbs) and the audit trigger function is
+-- private to the trigger; the blanket grants above would widen both, so they
+-- are restated here as the migration leaves them. The shape predicates keep
+-- EXECUTE with public, as the migration says they must.
+revoke all on public.venue_layouts from anon, authenticated;
+grant select, insert, update, delete on public.venue_layouts to authenticated;
+revoke execute on function public.audit_venue_layouts() from public, anon, authenticated;

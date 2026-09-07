@@ -261,6 +261,20 @@ jobs:
         env:
           REQUIRE_POSTGRES: '1'
         run: bash .github/scripts/production-migration/test_0052_atomic_team_order.sh
+      # 0053 adds the club's age group list, the venue_layouts table with
+      # its jsonb shape constraint, two policies, explicit grants and an
+      # audit trigger whose function is private to the trigger. This runs
+      # the reviewed file against a real server: its five registered probes
+      # in both gate states, the table and the column driven through row
+      # level security as every role the product has (including the proof
+      # that the trigger fires for a writer who cannot call its function),
+      # a second apply refused, and twenty mutations of the file, each
+      # pinned to the message of the one self-verification check that
+      # catches it.
+      - name: The venue layouts migration applies, behaves and its checks bite, against a real PostgreSQL
+        env:
+          REQUIRE_POSTGRES: '1'
+        run: bash .github/scripts/production-migration/test_0053_venue_layouts.sh
 
   # The Edge Function parser tests are hermetic Deno tests pinned against
   # real FA fixture pages; npm ci first because Deno resolves the npm

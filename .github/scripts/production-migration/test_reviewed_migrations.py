@@ -945,6 +945,119 @@ class TheTeamOrderRegistration(unittest.TestCase):
             self.assertIn(self.ORDER, fh.read())
 
 
+class TheVenueLayoutsRegistration(unittest.TestCase):
+    """0053 is registered against the head 0052's apply left, read live from
+    the hosted ledger on 7 September 2026, so what it is pinned to is pinned."""
+
+    LAYOUTS = "supabase/migrations/0053_venue_layouts.sql"
+
+    def entry(self):
+        return rm.REVIEWED_MIGRATIONS[self.LAYOUTS]
+
+    def test_it_is_registered_against_the_applied_0052_row(self):
+        # The hosted row 0052's apply stamped on 4 September 2026. A wrong
+        # value here fails the pre gate closed, which is safe, but it would
+        # also stop a correct apply.
+        e = self.entry()
+        self.assertEqual(e.expected_previous_version, "20260904174142")
+        self.assertEqual(e.expected_previous_name, "atomic_team_order")
+
+    def test_the_repository_record_agrees_with_the_registration(self):
+        with open(os.path.join(REPO, "docs/operations/production-migration-apply.md"),
+                  "r", encoding="utf-8") as fh:
+            doc = fh.read()
+        e = self.entry()
+        self.assertIn("`20260904174142`", doc)
+        self.assertIn("`atomic_team_order`", doc)
+        self.assertIn(e.expected_previous_version, doc)
+        self.assertIn("0053_venue_layouts", doc)
+
+    def test_it_names_the_file_and_carries_its_own_key(self):
+        e = self.entry()
+        self.assertEqual(e.ledger_name, "venue_layouts")
+        self.assertEqual(e.idempotency_key, "otj:migration:0053_venue_layouts")
+
+    def test_it_probes_the_column_the_table_the_key_the_predicate_and_the_trigger_function(self):
+        # One probe per object, so a partial apply cannot read as a whole one.
+        self.assertEqual(len(self.entry().objects), 5)
+
+    def test_every_probe_is_total(self):
+        for label, probe in self.entry().objects.items():
+            with self.subTest(label=label):
+                vh.assert_probe_is_total(label, probe)
+
+    def test_the_column_probe_pins_the_shape_and_not_only_the_name(self):
+        probe = self.entry().objects["public.clubs.age_groups, a text array, not null, default empty"]
+        self.assertIn("information_schema.columns", probe)
+        self.assertNotIn("pg_attribute", probe)
+        self.assertIn("udt_name = '_text'", probe)
+        self.assertIn("is_nullable = 'NO'", probe)
+        self.assertIn("column_default = concat(chr(39), '{}', chr(39), '::text[]')", probe)
+
+    def test_the_table_probe_requires_row_level_security(self):
+        probe = self.entry().objects["public.venue_layouts, with row level security enabled"]
+        self.assertIn("to_regclass('public.venue_layouts')", probe)
+        self.assertIn("c.relrowsecurity", probe)
+
+    def test_the_trigger_function_probe_requires_it_to_be_private(self):
+        # The one difference from audit_venues(): anon AND authenticated are
+        # both tested rather than assumed, because a grant to PUBLIC would
+        # reach both without naming either.
+        probe = self.entry().objects["audit_venue_layouts() is SECURITY DEFINER and private to the trigger"]
+        self.assertIn("to_regprocedure('public.audit_venue_layouts()')", probe)
+        self.assertIn("p.prosecdef", probe)
+        self.assertIn("not has_function_privilege('authenticated', p.oid, 'EXECUTE')", probe)
+        self.assertIn("not has_function_privilege('anon', p.oid, 'EXECUTE')", probe)
+        self.assertNotIn('"', probe)
+
+    def test_the_migration_file_carries_the_reviewed_shape(self):
+        sql = rm.read_migration_sql(os.path.join(REPO, self.LAYOUTS))
+        self.assertIn("add column age_groups text[] not null default '{}';", sql)
+        self.assertIn("create table public.venue_layouts (", sql)
+        self.assertIn("check (public.venue_layout_is_valid(zones, slots))", sql)
+        self.assertIn("unique (club_id, venue_id, season_id, age_group, kind, slots)", sql)
+        self.assertIn("for select using ( club_id = public.my_club() );", sql)
+        self.assertIn(
+            "for all using ( club_id = public.my_club() and public.has_perm('club.manage') )\n"
+            "  with check ( club_id = public.my_club() and public.has_perm('club.manage') );",
+            sql,
+        )
+        self.assertIn("revoke all on public.venue_layouts from anon, authenticated;", sql)
+        self.assertIn("grant select, insert, update, delete on public.venue_layouts to authenticated;", sql)
+        self.assertIn(
+            "revoke execute on function public.audit_venue_layouts() from public, anon, authenticated;",
+            sql,
+        )
+        # Not `if not exists`: a second run must fail at the column add.
+        self.assertNotIn("add column if not exists", sql)
+        self.assertNotIn("create table if not exists", sql)
+        # No accountability columns, by decision.
+        self.assertNotRegex(sql, r"(?m)^\s+(created_by|updated_by|updated_at)\s")
+
+    def test_the_file_rewrites_no_row(self):
+        # The only writes in the file are the probe's, and each is addressed
+        # to a synthetic row the probe created. Matched per STATEMENT.
+        sql = rm.read_migration_sql(os.path.join(REPO, self.LAYOUTS))
+        statements = re.findall(
+            r"(?is)\b(?:update|insert\s+into|delete\s+from)\s+public\.(?:clubs|venues|seasons|sessions|venue_layouts|capabilities|audit_events)\b[^;]*;",
+            sql,
+        )
+        self.assertTrue(statements, "the probe must exercise the tables")
+        for stmt in statements:
+            with self.subTest(statement=" ".join(stmt.split())):
+                self.assertNotRegex(stmt, r"(?i)\bsessions\b", "no session is ever written")
+                self.assertNotRegex(stmt, r"(?i)\bcapabilities\b", "no capability is ever written")
+                self.assertNotRegex(stmt, r"(?i)\baudit_events\b", "no audit row is written directly")
+                if re.match(r"(?i)update|delete", stmt):
+                    # Every update and delete names one probe variable.
+                    self.assertRegex(stmt, r"(?is)\bwhere\s+id\s*=\s*v_[a-z0-9_]+\s*;\Z")
+
+    def test_it_is_offered_by_the_workflow(self):
+        with open(os.path.join(REPO, ".github/workflows/apply-production-migration.yml"),
+                  "r", encoding="utf-8") as fh:
+            self.assertIn(self.LAYOUTS, fh.read())
+
+
 class MutatingASafeProbeBackIsCaught(unittest.TestCase):
     """The four protected classes, mutated back and proved to be caught.
 
