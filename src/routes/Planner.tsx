@@ -35,6 +35,7 @@ import {
   SourceLink,
 } from '../components/ui'
 import { ActivityListEditor, type SessionRowContent } from '../components/ActivityListEditor'
+import { useAuthoringReturn, usePlanDrillAuthoring } from '../components/PlanDrillAuthoring'
 import {
   createPlannerActions,
   logSessionWriteError,
@@ -599,10 +600,18 @@ function PlannerEditor({
   const mediaById = useMediaMap()
   const actTitle = useActivityTitle()
 
+  // COACH-11. A draft that went to the Drill Maker and came back is adopted
+  // as the initial state, in place of the stored row or a blank one. It is
+  // taken once, for this user and this session (a new session's stash is
+  // named null, and so is a new session), and the token leaves the address.
+  const returned = useAuthoringReturn<Session>('planner')
+  const restored = returned && returned.id === (existing?.id ?? null) ? returned.draft : null
   const [session, setSession] = useState<Session>(() =>
-    existing
-      ? (JSON.parse(JSON.stringify(existing)) as Session)
-      : blankSession(newDefaults?.coachId ?? ''),
+    restored
+      ? restored
+      : existing
+        ? (JSON.parse(JSON.stringify(existing)) as Session)
+        : blankSession(newDefaults?.coachId ?? ''),
   )
 
   // EVERY new session starts covering the whole club, seeded once the team
@@ -637,7 +646,9 @@ function PlannerEditor({
   // early leaves a session they can correct in one tap on the screen they
   // are already on. Blocking Save over a sub second read, or over a
   // failed one, would cost more than it saves.
-  const coverageSeeded = useRef(!!existing)
+  // A restored draft is one the coach already had in hand, so it is never
+  // seeded either: a coverage they cleared before drawing stays cleared.
+  const coverageSeeded = useRef(!!existing || !!restored)
   useEffect(() => {
     if (coverageSeeded.current || teams.length === 0) return
     coverageSeeded.current = true
@@ -721,6 +732,19 @@ function PlannerEditor({
       return { ...s, activities: a }
     })
   const addActivities = (items: Activity[]) => setSession((s) => ({ ...s, activities: [...s.activities, ...items] }))
+
+  // COACH-11. New drill and Turn into a drill, through the one shared hook
+  // the week plan editor calls too. The planner hands it the draft as it
+  // stands and takes back the plan with the created drill in it; the trip
+  // to the Drill Maker keeps the whole draft, restored above on return.
+  const authoring = usePlanDrillAuthoring<Session>({
+    host: 'planner',
+    id: existing?.id ?? null,
+    returnPath: existing ? `/planner?sessionId=${existing.id}` : '/planner',
+    activities: session.activities,
+    onActivities: (activities) => setSession((s) => ({ ...s, activities })),
+    draftWith: (activities) => ({ ...session, activities }),
+  })
 
   // One dated row's resolved content for the shared editor. A drillId whose
   // drill was deleted resolves to null; the row stays usable with a removed
@@ -945,7 +969,10 @@ function PlannerEditor({
             onRemove={removeAct}
             onAddLibrary={() => setAddOpen(true)}
             onAddCustom={() => addActivities([{ phase: 'Skill', title: 'Custom activity', duration: 10 }])}
+            onNewDrill={readOnly ? undefined : authoring.onNewDrill}
+            onTurnIntoDrill={readOnly ? undefined : authoring.onTurnIntoDrill}
           />
+          {authoring.note}
         </div>
 
         <div className="planner-side">
@@ -1035,6 +1062,7 @@ function PlannerEditor({
       {deleteOpen && existing && (
         <DeleteSessionModal s={existing} onClose={() => setDeleteOpen(false)} onDeleted={() => nav('sessions')} />
       )}
+      {authoring.modal}
     </div>
   )
 }

@@ -75,6 +75,11 @@ const OWNED_FILES = [
   // their two stylesheets off the scale; neither writes an inline style now.
   'routes/Home.tsx',
   'routes/ParentHome.tsx',
+  // VISUAL-03 with COACH-11: the shared activity list editor both planning
+  // hosts mount. It carried six inline sizes across the phase select, the
+  // minutes field and the detail panel; every one is a class on the scale
+  // now, so the add bar and the rows this slice touched cannot regress.
+  'components/ActivityListEditor.tsx',
 ]
 
 
@@ -471,6 +476,10 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
     'routes/ParentHome.tsx',
     'routes/Home.css',
     'routes/ParentHome.css',
+    // VISUAL-03 with COACH-11: the shared activity list editor. Its rows
+    // and add bar write no inline step now; the layout lives in the shared
+    // stylesheet, which the off scale rule above already reads.
+    'components/ActivityListEditor.tsx',
   ]
 
   it('writes no inline margin, padding or gap outside the spacing scale', () => {
@@ -530,6 +539,7 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
       'routes/ParentHome.tsx',
       'routes/Home.css',
       'routes/ParentHome.css',
+      'components/ActivityListEditor.tsx',
     ]) {
       expect(SPACING_OWNED, `${f} is covered`).toContain(f)
       expect(sourceFiles.map(rel), `${f} exists`).toContain(f)

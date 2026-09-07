@@ -32,6 +32,23 @@
 //             through the modal footer and no activity control froze
 //             before this seam existed, so none freezes now.
 //
+// COACH-11 ADDS TWO AFFORDANCES AND NO MEANING. New drill in the add bar
+// and Turn into a drill on a custom row are buttons that reach a host
+// callback, exactly like Add custom. Whether they are offered at all is
+// the host's answer (it holds drills.create or it does not), so both
+// arrive as OPTIONAL callbacks: a host that passes none renders the seam
+// COACH-10 shipped. What a press writes, the created drill, the return
+// trip to the Drill Maker and the kept draft all live in
+// ../lib/planDrillAuthoring and ./PlanDrillAuthoring, never here.
+//
+// VISUAL-03 ON THE TOUCHED MARKUP. The add bar and the two row controls
+// this slice touched draw with the shared system now: the Button
+// primitive, the type and spacing scales, and control sizes from the
+// tokens (the phase select and the minutes field sit at --control-h-sm,
+// two pixels taller than the literal they carried). The row's inline
+// sizes went with them, so this file is on the design system's owned
+// lists and a literal size cannot come back.
+//
 // WHAT THIS FILE MUST NOT KNOW. No query or mutation hook, no Supabase,
 // no idea whether it is editing a dated session or a reusable week: every
 // edit leaves through a host callback and lands in host state. Role and
@@ -44,6 +61,7 @@ import { Link } from 'react-router-dom'
 import { Icon } from './icons'
 import type { IconComponent } from './icons'
 import { PHASE_COLOR } from './ui'
+import { Button } from './primitives'
 import { ActivityRoleRow } from './ActivityRoleControls'
 import type { ActivityRole } from '../lib/activityRole'
 import { PHASES } from '../lib/data'
@@ -71,19 +89,11 @@ function PhaseSelect({
 }) {
   return (
     <select
+      className="act-phase"
       value={value}
       disabled={disabled}
+      aria-label="Phase"
       onChange={(e) => onChange(e.target.value as Phase)}
-      style={{
-        height: 34,
-        borderRadius: 8,
-        border: '1px solid var(--line)',
-        background: 'var(--bg)',
-        fontSize: 12.5,
-        fontWeight: 700,
-        color: 'var(--ink)',
-        padding: '0 6px',
-      }}
     >
       {PHASES.map((p) => (
         <option key={p} value={p}>
@@ -106,29 +116,18 @@ function DurationField({
   disabled?: boolean
 }) {
   return (
-    <div className="row" style={{ gap: 4 }}>
+    <div className="act-dur-field">
       <input
+        className="act-dur-input"
         type="number"
         value={value}
         min="1"
         max="90"
         disabled={disabled}
+        aria-label="Minutes"
         onChange={(e) => onChange(parseInt(e.target.value) || 0)}
-        style={{
-          width: 52,
-          height: 34,
-          borderRadius: 8,
-          border: '1px solid var(--line)',
-          background: 'var(--bg)',
-          textAlign: 'center',
-          fontWeight: 800,
-          fontSize: 13,
-          color: 'var(--ink)',
-        }}
       />
-      <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
-        min
-      </span>
+      <span className="act-dur-unit">min</span>
     </div>
   )
 }
@@ -177,7 +176,7 @@ function PanelList({ icon: Ico, label, items }: { icon: IconComponent; label: st
         {items.map((p, i) => (
           <div className="cp" key={i}>
             <span className="cp-num">{i + 1}</span>
-            <span style={{ fontSize: 14, lineHeight: 1.45 }}>{p}</span>
+            <span>{p}</span>
           </div>
         ))}
       </div>
@@ -207,6 +206,7 @@ export function ActivityCardView({
   onPhase,
   onRole,
   onStandDown,
+  onTurnIntoDrill,
   activities,
   dragHandlers,
   dragging,
@@ -235,6 +235,10 @@ export function ActivityCardView({
   // among the stations running tonight, which one activity cannot know.
   onRole: (i: number, role: ActivityRole) => void
   onStandDown: (i: number, on: boolean) => void
+  // COACH-11. Offered on a custom row (no drill) when the host supplies
+  // it, which the host does only for a member holding drills.create. A
+  // drill row never shows it: there is nothing to turn.
+  onTurnIntoDrill?: () => void
   activities: readonly Activity[]
   dragHandlers: DragHandlers
   dragging: boolean
@@ -274,7 +278,7 @@ export function ActivityCardView({
             <span className="ac-toggle-text">
               <span className="ac-title">{title}</span>
               <span className="ac-sub">
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <span className="ac-phase">
                   <span className="tag-dot" style={{ background: PHASE_COLOR[act.phase] }}></span>
                   {act.phase}
                 </span>
@@ -293,11 +297,14 @@ export function ActivityCardView({
             <div className="ac-body">
               <h4>{title}</h4>
               <div className="ac-sub">
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <span className="ac-phase">
                   <span className="tag-dot" style={{ background: PHASE_COLOR[act.phase] }}></span>
                   {act.phase}
                 </span>
               </div>
+              {onTurnIntoDrill && !readOnly && (
+                <TurnIntoDrillButton disabled={busy} onClick={onTurnIntoDrill} />
+              )}
             </div>
           </>
         )}
@@ -347,7 +354,7 @@ export function ActivityCardView({
               <Icon.cone style={{ width: 13, height: 13 }} />
               Equipment
             </div>
-            <div className="row wrap" style={{ gap: 7 }}>
+            <div className="row wrap">
               {drill.equipment.length ? (
                 drill.equipment.map((e) => (
                   <span className="pill" key={e}>
@@ -355,9 +362,7 @@ export function ActivityCardView({
                   </span>
                 ))
               ) : (
-                <span className="muted" style={{ fontSize: 13 }}>
-                  None needed
-                </span>
+                <span className="muted act-panel-none">None needed</span>
               )}
             </div>
           </div>
@@ -405,6 +410,7 @@ export function TemplateActivityRow({
   onRemove,
   activities,
   onRole,
+  onTurnIntoDrill,
 }: {
   activity: Activity
   title: string
@@ -419,6 +425,9 @@ export function TemplateActivityRow({
   // among the stations running, which one activity cannot know.
   activities: readonly Activity[]
   onRole: (role: ActivityRole) => void
+  // COACH-11. See ActivityCardView: offered on a custom row when the host
+  // supplies it, never on a drill row.
+  onTurnIntoDrill?: () => void
 }) {
   return (
     <div className="act-item" style={{ marginBottom: 0 }}>
@@ -427,12 +436,12 @@ export function TemplateActivityRow({
       <div className="ac-body">
         <h4>{title}</h4>
         <div className="ac-sub">{skill && <span>{skill}</span>}</div>
+        {onTurnIntoDrill && !activity.drillId && <TurnIntoDrillButton onClick={onTurnIntoDrill} />}
       </div>
       <PhaseSelect value={activity.phase} onChange={onPhase} />
       <DurationField value={activity.duration} onChange={onDuration} />
       <button
         className="icon-btn"
-        style={{ width: 34, height: 34 }}
         aria-label="Move up"
         disabled={index === 0}
         onClick={() => onMove(-1)}
@@ -441,7 +450,6 @@ export function TemplateActivityRow({
       </button>
       <button
         className="icon-btn"
-        style={{ width: 34, height: 34 }}
         aria-label="Move down"
         disabled={index === count - 1}
         onClick={() => onMove(1)}
@@ -461,33 +469,53 @@ export function TemplateActivityRow({
 
 // ---- The add bar ------------------------------------------------------
 
-// The two "add an activity" buttons under the list. On the dated planner
-// adding edits the draft, so both freeze while a write is in flight; the
-// week-plan editor passes no busy state, which is its current behaviour.
-// marginTop carries the one spacing difference the two hosts already had,
-// so neither surface moves by a pixel.
+// The "add an activity" buttons under the list. On the dated planner
+// adding edits the draft, so all of them freeze while a write is in
+// flight; the week-plan editor passes no busy state, which is its current
+// behaviour. New drill (COACH-11) is offered only when the host supplies
+// the callback, because it needs drills.create and the host is what knows.
+// The bar wraps: three actions do not fit one phone row, and a wrapped
+// button is a full width one rather than a clipped one.
 export function AddActivityBar({
   busy,
   onAddLibrary,
   onAddCustom,
-  marginTop = 4,
+  onNewDrill,
 }: {
   busy: boolean
   onAddLibrary: () => void
   onAddCustom: () => void
-  marginTop?: number
+  onNewDrill?: () => void
 }) {
   return (
-    <div className="row" style={{ gap: 10, marginTop }}>
-      <button className="add-slot" style={{ marginBottom: 0 }} disabled={busy} onClick={onAddLibrary}>
+    <div className="add-bar">
+      <button type="button" className="add-slot" disabled={busy} onClick={onAddLibrary}>
         <Icon.plus />
         Add from library
       </button>
-      <button className="add-slot" style={{ marginBottom: 0 }} disabled={busy} onClick={onAddCustom}>
+      <button type="button" className="add-slot" disabled={busy} onClick={onAddCustom}>
         <Icon.edit />
         Add custom
       </button>
+      {onNewDrill && (
+        <button type="button" className="add-slot" disabled={busy} onClick={onNewDrill}>
+          <Icon.cone />
+          New drill
+        </button>
+      )}
     </div>
+  )
+}
+
+// Turn into a drill, on a custom row. The same journey as New drill,
+// starting from the row the coach already has: the created drill takes
+// this row's place. Rendered by both rows, so the label and the control
+// are one thing.
+function TurnIntoDrillButton({ disabled = false, onClick }: { disabled?: boolean; onClick: () => void }) {
+  return (
+    <Button variant="quiet" size="sm" icon={Icon.cone} className="act-turn" disabled={disabled} onClick={onClick}>
+      Turn into a drill
+    </Button>
   )
 }
 
@@ -544,6 +572,8 @@ export function ActivityListEditor({
   onRemove,
   onAddLibrary,
   onAddCustom,
+  onNewDrill,
+  onTurnIntoDrill,
 }: {
   activities: readonly Activity[]
   variant: ActivityListVariant
@@ -553,11 +583,16 @@ export function ActivityListEditor({
   onRemove: (i: number) => void
   onAddLibrary: () => void
   onAddCustom: () => void
+  // COACH-11. Both optional, and a host passes both or neither: they are
+  // one capability (drills.create) reaching the seam through one hook,
+  // ./PlanDrillAuthoring. A host without it renders the COACH-10 seam.
+  onNewDrill?: () => void
+  onTurnIntoDrill?: (i: number) => void
 }) {
   if (variant.kind === 'plan') {
     return (
       <>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="act-list-plan">
           {activities.map((a, i) => {
             const { title, skill } = variant.meta(a)
             return (
@@ -574,11 +609,12 @@ export function ActivityListEditor({
                 onRole={(role) => onRole(i, role)}
                 onMove={(dir) => variant.onMove(i, dir)}
                 onRemove={() => onRemove(i)}
+                onTurnIntoDrill={onTurnIntoDrill ? () => onTurnIntoDrill(i) : undefined}
               />
             )
           })}
         </div>
-        <AddActivityBar busy={false} marginTop={8} onAddLibrary={onAddLibrary} onAddCustom={onAddCustom} />
+        <AddActivityBar busy={false} onAddLibrary={onAddLibrary} onAddCustom={onAddCustom} onNewDrill={onNewDrill} />
       </>
     )
   }
@@ -608,6 +644,7 @@ export function ActivityListEditor({
                 onPhase={onPhase}
                 onRole={onRole}
                 onStandDown={variant.onStandDown}
+                onTurnIntoDrill={onTurnIntoDrill ? () => onTurnIntoDrill(i) : undefined}
                 activities={activities}
                 dragHandlers={variant.dragHandlersFor(i)}
                 dragging={variant.draggingIdx === i}
@@ -619,7 +656,7 @@ export function ActivityListEditor({
         </div>
       )}
       {!variant.readOnly && (
-        <AddActivityBar busy={variant.busy} onAddLibrary={onAddLibrary} onAddCustom={onAddCustom} />
+        <AddActivityBar busy={variant.busy} onAddLibrary={onAddLibrary} onAddCustom={onAddCustom} onNewDrill={onNewDrill} />
       )}
     </>
   )

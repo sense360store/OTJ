@@ -168,7 +168,11 @@ describe('no create path seeds coverage from the signed in coach', () => {
     // suppresses the seed is editing a STORED session, whose coverage is
     // the answer: a one team session must never widen for being opened.
     const src = code(read('routes/Planner.tsx'))
-    expect(src).toMatch(/const coverageSeeded = useRef\(!!existing\)/)
+    // COACH-11 adds the second suppression: a draft restored from the
+    // Drill Maker round trip is one the coach already had in hand, so a
+    // coverage they cleared before drawing stays cleared. Nothing else
+    // suppresses it, which the exact form pins.
+    expect(src).toMatch(/const coverageSeeded = useRef\(!!existing \|\| !!restored\)/)
     // Once. A later teams refetch, a team added or a team deleted must
     // not rewrite a draft the coach has since edited.
     expect(src).toMatch(/if \(coverageSeeded\.current \|\| teams\.length === 0\) return/)

@@ -32,6 +32,7 @@ import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
 import { coverageKey, sessionTeamsLabel } from '../lib/sessionTeams'
 import { ProgrammeFormModal } from '../components/ProgrammeFormModal'
 import { TemplateFormModal } from '../components/TemplateFormModal'
+import { RestoredTemplateEditor } from '../components/RestoredTemplateEditor'
 import { ApplyProgrammeModal } from '../components/ApplyProgrammeModal'
 import { ShareAction } from '../components/ShareModal'
 
@@ -373,6 +374,9 @@ function ProgrammeView({ p }: { p: Programme }) {
 
       {editing && <ProgrammeFormModal programme={p} weekTemplates={weekTemplates} onClose={() => setEditing(false)} />}
       {editingTemplate && <TemplateFormModal template={editingTemplate} onClose={() => setEditingTemplate(null)} />}
+      {/* COACH-11. A week's draft that went to the Drill Maker comes back to
+          this page and reopens the editor on it. */}
+      <RestoredTemplateEditor templates={templates} />
       {applying && <ApplyProgrammeModal programme={p} weekTemplates={weekTemplates} onClose={() => setApplying(false)} />}
       {deleting && (
         <DeleteProgrammeModal

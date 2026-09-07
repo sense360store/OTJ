@@ -9,6 +9,7 @@ import { Icon } from '../components/icons'
 import { ActionError, ErrorNote, Loading, Modal, PHASE_COLOR } from '../components/ui'
 import { SESSION_CREATE_ERROR } from '../lib/sessionSubmit'
 import { TemplateFormModal } from '../components/TemplateFormModal'
+import { RestoredTemplateEditor } from '../components/RestoredTemplateEditor'
 import { ImportFAModal } from '../components/ImportFAModal'
 
 function TemplateCard({
@@ -243,6 +244,9 @@ export function Templates() {
       </div>
       {creating && <TemplateFormModal onClose={() => setCreating(false)} />}
       {editing && <TemplateFormModal template={editing} onClose={() => setEditing(null)} />}
+      {/* COACH-11. A week plan draft that went to the Drill Maker comes back
+          here and reopens the editor on it. */}
+      <RestoredTemplateEditor templates={templates} />
       {deleting && <DeleteTemplateModal t={deleting} onClose={() => setDeleting(null)} />}
       {importOpen && <ImportFAModal onClose={() => setImportOpen(false)} />}
     </div>

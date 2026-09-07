@@ -1,0 +1,167 @@
+// =====================================================================
+// COACH-11's boundary, pinned mechanically.
+//
+// A TRIPWIRE, NOT A PROOF. Everything here reads source text, so it
+// catches somebody typing the obvious thing: a host inserting a drill on
+// its own, a second stash, a navigation to the Drill Maker built by hand,
+// an adaptation column arriving a slice early. The behavioural half is
+// ../lib/planDrillAuthoring.test.ts and ../lib/authoringReturn.test.ts
+// over the pure rules, ./ActivityListEditor.test.tsx at the seam, and
+// ../routes/planDrillAuthoring.screens.test.tsx over the real screens.
+// =====================================================================
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+
+const SRC = join(import.meta.dirname, '..')
+const read = (f: string) => readFileSync(join(SRC, f), 'utf8')
+// Comments out, code in. Block comments are matched only where one OPENS a
+// line: the drill form's file accept list carries `image/*`, and a stripper
+// that reads that as a comment opener swallows everything up to the next
+// closer, which is how the first version of this file found no insert call.
+const code = (src: string) =>
+  src
+    .replace(/^\s*\{?\/\*[\s\S]*?\*\/\}?/gm, '')
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('//'))
+    .join('\n')
+
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = join(dir, entry)
+    return statSync(full).isDirectory() ? walk(full) : [full]
+  })
+}
+const sourceFiles = walk(SRC).filter((f) => /\.(ts|tsx)$/.test(f) && !f.includes('.test.'))
+const rel = (f: string) => f.slice(SRC.length + 1)
+
+const PLANNER = 'routes/Planner.tsx'
+const TEMPLATE = 'components/TemplateFormModal.tsx'
+const HOOK = 'components/PlanDrillAuthoring.tsx'
+const SEAM = 'components/ActivityListEditor.tsx'
+const RULES = 'lib/planDrillAuthoring.ts'
+const RETURN = 'lib/authoringReturn.ts'
+const EDITOR = 'routes/DrillDiagramEditor.tsx'
+
+describe('one hook, both hosts', () => {
+  it('both planning hosts create drills through usePlanDrillAuthoring and hand the seam its callbacks', () => {
+    for (const f of [PLANNER, TEMPLATE]) {
+      const src = code(read(f))
+      expect(src, f).toMatch(/usePlanDrillAuthoring</)
+      expect(src, f).toMatch(/onNewDrill=\{/)
+      expect(src, f).toMatch(/onTurnIntoDrill=\{/)
+      expect(src, f).toContain('{authoring.modal}')
+      expect(src, f).toContain('{authoring.note}')
+    }
+  })
+
+  it('neither host inserts a drill, opens the drill form, or builds the Drill Maker address itself', () => {
+    for (const f of [PLANNER, TEMPLATE]) {
+      const src = code(read(f))
+      expect(src, f).not.toMatch(/useInsertDrill/)
+      expect(src, f).not.toMatch(/<DrillFormModal/)
+      expect(src, f).not.toMatch(/\/diagram/)
+      expect(src, f).not.toMatch(/sessionStorage/)
+    }
+  })
+
+  it('the seam renders the affordances and knows nothing about what they do', () => {
+    const src = code(read(SEAM))
+    expect(src).toContain('New drill')
+    expect(src).toContain('Turn into a drill')
+    expect(src).not.toMatch(/useInsertDrill|DrillFormModal|leaveToDraw|stashDraft|navigate/)
+    // Still hook free: the COACH-10 invariant, restated for this slice.
+    expect(src).not.toMatch(/\buse[A-Z]\w*\(/)
+  })
+
+  it('the return trip is read by the planner and by the one restorer of the week plan editor', () => {
+    expect(code(read(PLANNER))).toMatch(/useAuthoringReturn<Session>\('planner'\)/)
+    expect(code(read('components/RestoredTemplateEditor.tsx'))).toMatch(/useAuthoringReturn<TemplateInput>\('template'\)/)
+    for (const f of ['routes/Templates.tsx', 'routes/ProgrammeDetail.tsx']) {
+      expect(code(read(f)), f).toMatch(/<RestoredTemplateEditor templates=\{templates\} \/>/)
+    }
+  })
+})
+
+describe('the stash and the way back have one implementation', () => {
+  it('session storage is touched in authoringReturn.ts and nowhere else', () => {
+    const offenders = sourceFiles.filter((f) => rel(f) !== RETURN && /sessionStorage/.test(code(read(rel(f)))))
+    expect(offenders.map(rel)).toEqual([])
+  })
+
+  it('the Drill Maker address is built by drawPath and nowhere else', () => {
+    const offenders = sourceFiles.filter((f) => rel(f) !== RETURN && /\/diagram\?/.test(code(read(rel(f)))))
+    expect(offenders.map(rel)).toEqual([])
+    expect(code(read(RULES))).toMatch(/navigate\(drawPath\(/)
+  })
+
+  it('the stash lands before the navigation, and a failed stash never navigates', () => {
+    const src = code(read(RULES))
+    const stash = src.indexOf('stashDraft(')
+    const nav = src.indexOf('navigate(drawPath(')
+    expect(stash).toBeGreaterThan(-1)
+    expect(nav).toBeGreaterThan(stash)
+    expect(src.slice(stash, nav)).toMatch(/if \(!stashed\) return 'stash_failed'/)
+  })
+
+  it('the Drill Maker reads its way back through safeReturnPath, once, and every Back uses it', () => {
+    const src = code(read(EDITOR))
+    expect(src.match(/safeReturnPath\(/g)).toHaveLength(1)
+    expect(src).not.toMatch(/search\.get\((?!RETURN_PARAM)/)
+    // No Back left on the old fixed destination: each one goes through the
+    // one resolved address, or falls back only when there is none.
+    expect(src).not.toMatch(/navigate\(`\/drill\/\$\{drill\.id\}`\)/)
+    expect(src).not.toMatch(/navigate\(`\/drill\/\$\{drillId\}`\)/)
+    expect(src).not.toMatch(/navigate\('\/library'\)/)
+    expect(src).toMatch(/const backLabel = returnTo \? BACK_TO_PLAN : BACK_TO_DRILL/)
+  })
+
+  it('the allowlist is by prefix and names the three surfaces this flow comes from', () => {
+    const src = code(read(RETURN))
+    expect(src).toMatch(/RETURN_PREFIXES = \['\/planner', '\/templates', '\/programmes\/'\]/)
+  })
+})
+
+describe('no COACH-12 or COACH-13 semantics have leaked in', () => {
+  it('names no adaptation, listing or promotion concept anywhere under src', () => {
+    // variant_of and library_listed are COACH-12's columns; an unlisted or
+    // adapted drill is its concept; promotion is COACH-13's. None of them
+    // exists yet, and creating a drill from a plan produces an ordinary
+    // library drill, so none of these words may appear in shipped code.
+    const offenders: string[] = []
+    for (const f of sourceFiles) {
+      const src = code(read(rel(f)))
+      for (const word of ['variant_of', 'variantOf', 'library_listed', 'libraryListed', 'unlisted', 'adaptation_of', 'promoteToTemplate']) {
+        if (src.includes(word)) offenders.push(`${rel(f)}: ${word}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('the created drill is the same insert the Library uses, with no extra column', () => {
+    // The form's plan mode calls insert.mutate with the form input and
+    // nothing else; the plan learns the phase through the callback, never
+    // the row.
+    const src = code(read('components/DrillFormModal.tsx'))
+    expect(src).toMatch(/insert\.mutate\(input, \{\s*onSuccess: \(created\) => plan\.onCreated\(created, \{ phase, duration: form\.duration \}, what\)/)
+    expect(src).not.toMatch(/phase:\s*phase[,\s}]/)
+    expect(src).not.toMatch(/\.\.\.form,\s*phase/)
+  })
+
+  it('the hook gates on drills.create and on nothing new', () => {
+    const src = code(read(HOOK))
+    expect(src).toMatch(/DRILL_CREATE_CAP = 'drills\.create'/)
+    expect(src).toMatch(/caps\.has\(DRILL_CREATE_CAP\)/)
+    expect(src).not.toMatch(/caps\.has\('(?!drills\.create)/)
+  })
+})
+
+describe('what this file cannot catch', () => {
+  it('cannot see a navigation built through a variable, or a stash written under another key', () => {
+    // A host that assembles '/drill/' + id + '/diagram' walks past the
+    // address check, and a second storage key walks past the word
+    // sessionStorage only if it also avoids the word. What holds the line
+    // is the pure suites and the screens test, plus review.
+    expect(true).toBe(true)
+  })
+})
