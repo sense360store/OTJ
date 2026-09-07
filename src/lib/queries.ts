@@ -5767,13 +5767,16 @@ export function useSaveVenueLayout() {
       if (!profile?.club_id) throw new Error('You must be signed in to draw a layout.')
       const zones = serialiseVenueLayoutZones(input.zones, input.shape)
       // jsonb equality is by value, so the row matches exactly when it still
-      // holds what the read returned, whatever key order the wire used.
+      // holds what the read returned, whatever key order the wire used. The
+      // value is sent as JSON text: postgrest-js interpolates an eq value
+      // with a template string, so an object would reach the server as
+      // "[object Object]" and be refused as a jsonb literal (22P02).
       const query = input.id
         ? supabase
             .from('venue_layouts')
             .update({ zones })
             .eq('id', input.id)
-            .eq('zones', input.expectedZones as never)
+            .eq('zones', JSON.stringify(input.expectedZones ?? null))
         : supabase.from('venue_layouts').insert({
             club_id: profile.club_id,
             venue_id: input.venueId,

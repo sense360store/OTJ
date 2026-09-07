@@ -342,11 +342,13 @@ describe('venue layouts row level security', () => {
     const opened = fresh!.zones
     const theirs = { version: 1, zones: [{ n: 1, x: 0.05, y: 0.1, w: 0.4, h: 0.8 }, { n: 2, x: 0.55, y: 0.1, w: 0.4, h: 0.8 }] }
     const mine = { version: 1, zones: [{ n: 1, x: 0.02, y: 0.15, w: 0.45, h: 0.7 }, { n: 2, x: 0.53, y: 0.15, w: 0.45, h: 0.7 }] }
+    // The condition travels as JSON text: postgrest-js interpolates an eq
+    // value, so an object would arrive as "[object Object]" and be refused.
     // The first redraw lands: the row still holds what was opened.
-    const { data: first } = await admin.from('venue_layouts').update({ zones: theirs }).eq('id', fresh!.id).eq('zones', opened as never).select('id')
+    const { data: first } = await admin.from('venue_layouts').update({ zones: theirs }).eq('id', fresh!.id).eq('zones', JSON.stringify(opened)).select('id')
     expect(first).toHaveLength(1)
     // The second, opened on the same value, finds no row and lands nothing.
-    const { data: second, error: secondErr } = await admin.from('venue_layouts').update({ zones: mine }).eq('id', fresh!.id).eq('zones', opened as never).select('id')
+    const { data: second, error: secondErr } = await admin.from('venue_layouts').update({ zones: mine }).eq('id', fresh!.id).eq('zones', JSON.stringify(opened)).select('id')
     expect(secondErr).toBeNull()
     expect(second).toEqual([])
     const { data: held } = await admin.from('venue_layouts').select('zones').eq('id', fresh!.id).single()
