@@ -291,6 +291,12 @@ function sessionBuildReason(err: unknown): string {
   throw err
 }
 
+// The drill builder's stated refusal, the same shape and the same rule.
+function drillBuildReason(err: unknown): string {
+  if (err instanceof SnapshotBuildError) return err.reason
+  throw err
+}
+
 function errCode(err: any): string {
   return (err && (err.code || err.name)) ? String(err.code || err.name) : 'unknown'
 }
@@ -559,7 +565,21 @@ async function handlePreview(
   // as create, but only when eligible (the builder refuses restricted content).
   let preview: unknown = null
   if (elig.eligible) {
-    preview = toPublicProjection(buildDrillSnapshot(drill, media, new Date().toISOString()))
+    // The size cap is measurable only after projection; a refusal there is a
+    // blocker with a stated reason, never a 500, so the coach is not offered a
+    // confirmation that would then fail.
+    try {
+      preview = toPublicProjection(buildDrillSnapshot(drill, media, new Date().toISOString()))
+    } catch (err) {
+      return reply(200, {
+        ok: true,
+        eligible: false,
+        blocked: [drillBuildReason(err)],
+        rights: rightsSummary(drill, media),
+        provenance: provenanceOf(drill, { media: media ? [media] : [] }),
+        preview: null,
+      })
+    }
   }
   return reply(200, {
     ok: true,
@@ -671,7 +691,12 @@ async function handleCreate(
     return reply(422, { error: 'This drill cannot be shared publicly.', blocked: elig.blocked })
   }
 
-  const snapshot = buildDrillSnapshot(drill, media, new Date().toISOString())
+  let snapshot
+  try {
+    snapshot = buildDrillSnapshot(drill, media, new Date().toISOString())
+  } catch (err) {
+    return reply(422, { error: 'This drill cannot be shared publicly.', blocked: [drillBuildReason(err)] })
+  }
   const secret = generateSecret()
   const secretHash = await secretHashLiteral(secret)
 
@@ -869,7 +894,12 @@ async function handleRefresh(admin: AdminClient, caller: Caller, shareId: string
   if (!elig.eligible) {
     return reply(422, { error: 'This drill can no longer be shared publicly.', blocked: elig.blocked })
   }
-  const snapshot = buildDrillSnapshot(drill, media, new Date().toISOString())
+  let snapshot
+  try {
+    snapshot = buildDrillSnapshot(drill, media, new Date().toISOString())
+  } catch (err) {
+    return reply(422, { error: 'This drill can no longer be shared publicly.', blocked: [drillBuildReason(err)] })
+  }
 
   const { data, error } = await admin.rpc('manage_content_share', {
     p_action: 'refresh',

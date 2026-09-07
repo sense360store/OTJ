@@ -1406,15 +1406,19 @@ them in one session are under a quarter of the 256 KiB snapshot cap, both
 pinned in `share_test.ts`. The cap became reachable by a session with this
 change (roughly forty distinct drills each carrying a maximal diagram), and
 until now only the programme builder measured it; a session over it reached
-the lifecycle RPC's bare exception and the coach saw a generic failure. Both
+the lifecycle RPC's bare exception and the coach saw a generic failure. All three
 builders now measure their output with `jsonbTextBytes`, which counts the
 bytes the way `content_share_resolve_snapshot` does (`octet_length` of the
 jsonb text form, with its `", "` and `": "` separators, about thirteen
 percent wider than compact JSON), so a builder never passes what the RPC then
-refuses. A session over the cap is refused with `snapshot_too_large` on
-preview, create and refresh, worded for the coach like the programme case,
-and `evaluateSessionEligibility` is unchanged because the cap is measurable
-only after projection.
+refuses. A session or a standalone drill over the cap is refused with
+`snapshot_too_large` on preview, create and refresh, worded for the coach like
+the programme case, and the eligibility functions are unchanged because the
+cap is measurable only after projection. The drill case is real: sixty four
+coaching points at the text cap sit just under the size cap on their own
+(256701 bytes against 262144, measured through the builder), and a maximal
+diagram carries the drill over it, which the exact head security review found
+after the session preflight landed.
 
 ### 55.6 Deployment gate
 

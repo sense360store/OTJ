@@ -191,6 +191,7 @@ export type BlockReason =
   | 'media_internal_only'
   | 'media_missing'
   | 'media_path_invalid'
+  | 'snapshot_too_large'
 
 export interface Eligibility {
   eligible: boolean
@@ -878,6 +879,16 @@ export function buildDrillSnapshot(
     public: true,
   }
 
+  // The cap is measurable only after projection. A drill's capped text fields
+  // alone can sit just under it (sixty three coaching points at the text cap
+  // do), and a diagram is what then carries it over, so the standalone drill
+  // takes the same preflight the session and programme builders take: a
+  // stated reason on preview, create and refresh rather than the RPC's bare
+  // exception reported as a generic failure.
+  if (jsonbTextBytes(snapshot) > MAX_SNAPSHOT_BYTES) {
+    throw new DrillBuildError('snapshot_too_large', 'buildDrillSnapshot: refusing to project a snapshot over the size cap')
+  }
+
   assertAllowlistedKeys(snapshot)
   return snapshot
 }
@@ -1437,6 +1448,13 @@ export class SnapshotBuildError extends Error {
     super(message)
     this.name = 'SnapshotBuildError'
     this.reason = reason
+  }
+}
+
+export class DrillBuildError extends SnapshotBuildError {
+  constructor(reason: BlockReason, message: string) {
+    super(reason, message)
+    this.name = 'DrillBuildError'
   }
 }
 

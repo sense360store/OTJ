@@ -89,6 +89,7 @@ const ORDER: Record<ShareKindNoun, readonly string[]> = {
   drill: [
     'media_missing',
     'media_path_invalid',
+    'snapshot_too_large',
     'source_internal_only',
     'media_internal_only',
   ],

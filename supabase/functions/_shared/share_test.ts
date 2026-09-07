@@ -9,6 +9,7 @@ import {
   base64urlEncode,
   type BoardRow,
   buildDrillSnapshot,
+  DrillBuildError,
   buildProgrammeSnapshot,
   buildSessionSnapshot,
   DRILL_BUILDER,
@@ -2325,6 +2326,34 @@ Deno.test('a session over the snapshot cap is refused by the builder with the st
   const six = drills.slice(0, 6)
   const ok = buildSessionSnapshot(session({ activities: six.map((dr) => ({ phase: 'Skill', drill_id: dr.id, duration: 1 })) }), six, [], null, AT)
   assert(jsonbTextBytes(ok) < MAX_SNAPSHOT_BYTES / 4)
+})
+
+Deno.test('a standalone drill over the snapshot cap is refused by the builder with the stated reason', () => {
+  // Sixty four coaching points at the text cap (the array cap) sit just under
+  // the size cap on their own, measured through this builder at 256701 bytes
+  // against 262144; a maximal diagram is what carries the drill over it.
+  // Found by the exact head security review after the session preflight
+  // landed.
+  const widest = Array.from({ length: MAX_DIAGRAM_ELEMENTS }, (_, i) => ({
+    type: 'arrow', id: `arrow-${i}`, x1: 0.1234, y1: 0.5678, x2: 0.9012, y2: 0.3456, arrow: 'dribble',
+  }))
+  const points = Array.from({ length: 64 }, (_, i) => `${i} `.padEnd(4000, 'x'))
+  const heavy = drill({ points, diagram: storedDiagram({ elements: widest }) })
+  let caught: unknown = null
+  try {
+    buildDrillSnapshot(heavy, null, AT)
+  } catch (err) {
+    caught = err
+  }
+  assert(caught instanceof DrillBuildError, 'the builder must refuse with a stated reason')
+  assertEquals((caught as DrillBuildError).reason, 'snapshot_too_large')
+  // Eligibility cannot see the cap; the handlers catch the builder on preview,
+  // create and refresh.
+  assert(evaluateDrillEligibility(heavy, null).eligible)
+  // The same drill without its diagram still fits, and a drill with the
+  // diagram and ordinary text is nowhere near the cap.
+  assert(jsonbTextBytes(buildDrillSnapshot(drill({ points }), null, AT)) <= MAX_SNAPSHOT_BYTES)
+  assert(jsonbTextBytes(buildDrillSnapshot(drill({ diagram: storedDiagram({ elements: widest }) }), null, AT)) < MAX_SNAPSHOT_BYTES / 16)
 })
 
 Deno.test('diagram: the builder is deterministic with a diagram', () => {

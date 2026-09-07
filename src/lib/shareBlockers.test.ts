@@ -133,6 +133,7 @@ describe('copy for each reason', () => {
     ['programme', 'too_many_media', /more files/],
     ['programme', 'snapshot_too_large', /This programme is too large/],
     ['session', 'snapshot_too_large', /This session is too large/],
+    ['drill', 'snapshot_too_large', /This drill is too large/],
   ]
 
   for (const [noun, reason, matcher] of cases) {

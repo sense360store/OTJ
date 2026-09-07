@@ -289,6 +289,17 @@ describe('an existing share gains a diagram only by being rebuilt', () => {
     }
   })
 
+  it('every drill handler catches the builder’s stated refusal the same way', () => {
+    // SOURCE TEXT. The drill branches live inside the kind dispatching
+    // handlers (handlePreview, handleCreate, handleRefresh), so each of those
+    // three must wrap its drill build.
+    for (const name of ['handlePreview', 'handleCreate', 'handleRefresh']) {
+      const body = fn(name)
+      expect(body, `${name} does not catch the drill builder`).toContain('drillBuildReason(err)')
+      expect(body).toContain('buildDrillSnapshot(')
+    }
+  })
+
   it('rotate and revoke never rebuild: a new secret or a closed link does not republish content', () => {
     for (const name of ['handleRotate', 'handleRevoke']) {
       const body = fn(name)
