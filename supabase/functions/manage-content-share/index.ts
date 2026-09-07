@@ -81,8 +81,15 @@ const MAX_BODY_BYTES = 8 * 1024
 // provenance answer aligned with what migration 0043 actually refuses. It is
 // never projected: the builder copies an explicit allow list, and source_key is
 // in FORBIDDEN_ANYWHERE, so a future leak trips the scanner rather than shipping.
+//
+// diagram is the saved Drill Maker diagram (0046), read since DRILL-02b. It is
+// the ONE column widening that change made, and it is projected only through
+// projectDrillDiagram's allow list in _shared/share.ts (no element id, no key
+// outside the seven public shapes, nothing on an England Football derived
+// drill). The client's own DRILL_COLS in src/lib/queries.ts deliberately still
+// omits it; this read is the sharing builders' and nobody else's.
 const DRILL_COLS =
-  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, setup_notes, easier, harder, theme, format, source_url, source_label, source_key, media_id, rights'
+  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, setup_notes, easier, harder, theme, format, source_url, source_label, source_key, media_id, rights, diagram'
 const MEDIA_COLS = 'id, club_id, name, type, storage_path, yt_url, embed_url, source_url, source_label, rights'
 const SESSION_COLS =
   'id, club_id, name, focus, age_group, intentions, space, activities, board_id, source_url, source_label, rights'

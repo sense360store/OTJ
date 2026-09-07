@@ -17,6 +17,12 @@ import {
   invalidMediaPaths,
   anyRestricted,
   isFaSourceUrl,
+  isPublicDrillDiagram,
+  MAX_DIAGRAM_ELEMENTS,
+  MAX_DIAGRAM_LABEL,
+  MAX_DIAGRAM_TEXT,
+  MAX_SNAPSHOT_BYTES,
+  projectDrillDiagram,
   rowProvenance,
   buildShareListFilter,
   deriveShareStatus,
@@ -1853,4 +1859,361 @@ Deno.test('anyRestricted: true only for a blocking row that is England Football 
   // A row that is not blocking cannot make the layer restricted.
   assertEquals(anyRestricted([faButPublishable]), false)
   assertEquals(anyRestricted([]), false)
+})
+
+// =========================================================================
+// The drill diagram projection (DRILL-02b)
+// =========================================================================
+//
+// The stored shape is what src/lib/drillDiagram.ts writes and the 0046 check
+// constraint allows: version 1, a surface, and elements that each carry an id.
+// The public shape is narrower: no version, no id. These tests pin the whole
+// contract from both ends, through the real builders.
+
+const FA_URL = 'https://learn.englandfootball.com/coaching/activity/abc'
+
+function storedDiagram(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 1,
+    surface: { kind: 'half_pitch', orientation: 'landscape' },
+    elements: [
+      { type: 'player', id: 'player-1', x: 0.5, y: 0.5, colour: 'blue', label: '9' },
+      { type: 'cone', id: 'cone-2', x: 0.2, y: 0.3, colour: 'orange' },
+      { type: 'ball', id: 'ball-3', x: 0.4, y: 0.6 },
+      { type: 'goal', id: 'goal-4', x: 0.5, y: 0.1, width: 0.24, facing: 'up' },
+      { type: 'arrow', id: 'arrow-5', x1: 0.1, y1: 0.1, x2: 0.6, y2: 0.7, arrow: 'pass' },
+      { type: 'zone', id: 'zone-6', x: 0.1, y: 0.1, w: 0.4, h: 0.3, colour: 'yellow' },
+      { type: 'text', id: 'text-7', x: 0.5, y: 0.9, text: 'Press' },
+    ],
+    ...over,
+  }
+}
+
+const PUBLIC_ELEMENT_KEYS: Record<string, string[]> = {
+  player: ['type', 'x', 'y', 'colour', 'label'],
+  cone: ['type', 'x', 'y', 'colour'],
+  ball: ['type', 'x', 'y'],
+  goal: ['type', 'x', 'y', 'width', 'facing'],
+  arrow: ['type', 'x1', 'y1', 'x2', 'y2', 'arrow'],
+  zone: ['type', 'x', 'y', 'w', 'h', 'colour'],
+  text: ['type', 'x', 'y', 'text'],
+}
+
+Deno.test('diagram: every element type projects with exactly its public keys, no id and no version', () => {
+  const d = projectDrillDiagram(storedDiagram())
+  assert(d !== null)
+  assertEquals(Object.keys(d).sort(), ['elements', 'surface'])
+  assertEquals(d.surface, { kind: 'half_pitch', orientation: 'landscape' })
+  assertEquals(d.elements.length, 7)
+  for (const el of d.elements) {
+    assertEquals(Object.keys(el), PUBLIC_ELEMENT_KEYS[el.type], `public keys for ${el.type}`)
+  }
+  const flat = JSON.stringify(d)
+  assert(!flat.includes('"id"'), 'an element id reached the public diagram')
+  assert(!flat.includes('version'), 'the stored version reached the public diagram')
+  assert(isPublicDrillDiagram(d))
+})
+
+Deno.test('diagram: the projection is a positive allow list, so unknown and identity keys never survive', () => {
+  const d = projectDrillDiagram(storedDiagram({
+    playerId: 'p-secret',
+    surface: { kind: 'blank', orientation: 'portrait', name: 'Pitch 3', venueId: 'v1' },
+    elements: [
+      { type: 'player', id: 'player-1', x: 0.5, y: 0.5, colour: 'blue', label: 'R', playerId: 'p-secret', name: 'Riley', spond_member_id: 'ABCDEF' },
+      { type: 'cone', id: 'cone-2', x: 0.2, y: 0.3, colour: 'orange', display_name: 'x', shirt_number: 9 },
+    ],
+  }))
+  assert(d !== null)
+  const flat = JSON.stringify(d)
+  for (const leaked of ['playerId', 'p-secret', 'Riley', 'spond_member_id', 'ABCDEF', 'display_name', 'shirt_number', 'venueId', 'Pitch 3']) {
+    assert(!flat.includes(leaked), `projection leaked ${leaked}`)
+  }
+  assertEquals(Object.keys(d.surface).sort(), ['kind', 'orientation'])
+  assertEquals(d.elements[0], { type: 'player', x: 0.5, y: 0.5, colour: 'blue', label: 'R' })
+  assertEquals(d.elements[1], { type: 'cone', x: 0.2, y: 0.3, colour: 'orange' })
+})
+
+Deno.test('diagram: absent, null, empty, unreadable and future shaped all project as null', () => {
+  assertEquals(projectDrillDiagram(undefined), null)
+  assertEquals(projectDrillDiagram(null), null)
+  assertEquals(projectDrillDiagram('a string'), null)
+  assertEquals(projectDrillDiagram([]), null)
+  assertEquals(projectDrillDiagram(storedDiagram({ elements: [] })), null)
+  assertEquals(projectDrillDiagram(storedDiagram({ elements: 'nope' })), null)
+  // The one whole diagram refusal: a future version is never read as version 1.
+  assertEquals(projectDrillDiagram(storedDiagram({ version: 2 })), null)
+  assertEquals(projectDrillDiagram(storedDiagram({ version: '1' })), null)
+  // Every element unreadable is the same as no elements.
+  assertEquals(projectDrillDiagram(storedDiagram({ elements: [{ type: 'hologram', id: 'h-1', x: 0.5, y: 0.5 }] })), null)
+})
+
+Deno.test('diagram: an unknown element type is dropped, and the rest of the drawing survives', () => {
+  const d = projectDrillDiagram(storedDiagram({
+    elements: [
+      { type: 'hologram', id: 'h-1', x: 0.5, y: 0.5 },
+      { type: 'ball', id: 'ball-1', x: 0.4, y: 0.6 },
+      'not an object',
+      { id: 'no-type', x: 0.1, y: 0.1 },
+    ],
+  }))
+  assertEquals(d?.elements, [{ type: 'ball', x: 0.4, y: 0.6 }])
+})
+
+Deno.test('diagram: coordinates are clamped to the surface and rounded, a non finite one drops the element', () => {
+  const d = projectDrillDiagram(storedDiagram({
+    elements: [
+      { type: 'ball', id: 'ball-1', x: 1.7, y: -0.2 },
+      { type: 'ball', id: 'ball-2', x: 0.123456789, y: 0.5 },
+      { type: 'ball', id: 'ball-3', x: Number.NaN, y: 0.5 },
+      { type: 'ball', id: 'ball-4', x: '0.5', y: 0.5 },
+      { type: 'arrow', id: 'arrow-5', x1: 0.1, y1: 0.1, x2: Number.POSITIVE_INFINITY, y2: 0.7, arrow: 'run' },
+      { type: 'zone', id: 'zone-6', x: 0.9, y: 0.9, w: -0.5, h: 5, colour: 'red' },
+      { type: 'goal', id: 'goal-7', x: 0.5, y: 0.5, width: 9, facing: 'sideways' },
+    ],
+  }))
+  assert(d !== null)
+  assertEquals(d.elements, [
+    { type: 'ball', x: 1, y: 0 },
+    { type: 'ball', x: 0.1235, y: 0.5 },
+    // ball-3, ball-4 and arrow-5 dropped: corruption, not a stale value.
+    { type: 'zone', x: 0.5, y: 0, w: 0.5, h: 1, colour: 'red' },
+    { type: 'goal', x: 0.5, y: 0.5, width: 0.6, facing: 'up' },
+  ])
+  assert(isPublicDrillDiagram(d))
+})
+
+Deno.test('diagram: the element cap holds and a repeated id keeps the first, as the client parser does', () => {
+  const many = Array.from({ length: MAX_DIAGRAM_ELEMENTS + 20 }, (_, i) => ({ type: 'cone', id: `cone-${i}`, x: 0.5, y: 0.5, colour: 'blue' }))
+  const capped = projectDrillDiagram(storedDiagram({ elements: many }))
+  assertEquals(capped?.elements.length, MAX_DIAGRAM_ELEMENTS)
+
+  const repeated = projectDrillDiagram(storedDiagram({
+    elements: [
+      { type: 'cone', id: 'cone-1', x: 0.1, y: 0.1, colour: 'blue' },
+      { type: 'cone', id: 'cone-1', x: 0.9, y: 0.9, colour: 'red' },
+      { type: 'cone', id: '', x: 0.5, y: 0.5, colour: 'green' },
+      { type: 'cone', x: 0.5, y: 0.5, colour: 'green' },
+    ],
+  }))
+  assertEquals(repeated?.elements, [{ type: 'cone', x: 0.1, y: 0.1, colour: 'blue' }])
+})
+
+Deno.test('diagram: the two free text fields are sanitised and capped, and an emptied label goes', () => {
+  const d = projectDrillDiagram(storedDiagram({
+    elements: [
+      { type: 'player', id: 'player-1', x: 0.5, y: 0.5, colour: 'blue', label: '<b>9</b>' },
+      { type: 'player', id: 'player-2', x: 0.5, y: 0.5, colour: 'blue', label: 'Riley Smith' },
+      { type: 'player', id: 'player-3', x: 0.5, y: 0.5, colour: 'blue', label: 42 },
+      { type: 'text', id: 'text-4', x: 0.5, y: 0.5, text: 'javascript:alert(1) Press' },
+      { type: 'text', id: 'text-5', x: 0.5, y: 0.5, text: 'A'.repeat(200) },
+      { type: 'text', id: 'text-6', x: 0.5, y: 0.5, text: '<script>x</script>' },
+      { type: 'text', id: 'text-7', x: 0.5, y: 0.5, text: '   ' },
+    ],
+  }))
+  assert(d !== null)
+  const [p1, p2, p3, t4, t5] = d.elements as Array<Record<string, unknown>>
+  assertEquals(p1.label, '9')
+  assertEquals((p2.label as string).length, MAX_DIAGRAM_LABEL)
+  assertEquals(p3.label, '')
+  assertEquals(t4.text, 'alert(1) Press')
+  assertEquals((t5.text as string).length, MAX_DIAGRAM_TEXT)
+  // text-6 sanitises to nothing and text-7 is blank: both dropped.
+  assertEquals(d.elements.length, 5)
+  assert(!JSON.stringify(d).includes('<'))
+})
+
+Deno.test('diagram: an England Football derived drill projects no diagram, whatever the row holds', () => {
+  for (const source of [
+    { source_url: FA_URL },
+    { source_label: 'England Football Learning' },
+    { source_key: 'https://learn.englandfootball.com/a#act-2' },
+  ]) {
+    const s = buildDrillSnapshot(drill({ ...source, diagram: storedDiagram() }), null, AT)
+    assertEquals(s.diagram, null, `FA drill projected a diagram via ${JSON.stringify(source)}`)
+  }
+  // The FA's own image still travels, through the media pool and its attribution.
+  const withImage = buildDrillSnapshot(
+    drill({ source_url: FA_URL, media_id: media().id, diagram: storedDiagram() }),
+    media({ source_url: FA_URL, source_label: 'England Football Learning' }),
+    AT,
+  )
+  assertEquals(withImage.diagram, null)
+  assertEquals(withImage.media.length, 1)
+  // A third party source is not the FA rule: the diagram is the coach's.
+  const third = buildDrillSnapshot(drill({ source_url: 'https://example.com/x', diagram: storedDiagram() }), null, AT)
+  assert(third.diagram !== null)
+})
+
+Deno.test('diagram: a club drill carries it into a standalone, a session and a programme snapshot', () => {
+  const standalone = buildDrillSnapshot(drill({ diagram: storedDiagram() }), null, AT)
+  assertAllowlistedKeys(standalone)
+  assert(standalone.diagram !== null && standalone.diagram.elements.length === 7)
+  const pubDrill = toPublicProjection(standalone)
+  assert(validatePublicDrillSnapshot(pubDrill))
+  assertNoForbiddenKeys(pubDrill)
+
+  const sess = buildSessionSnapshot(session(), [drillA({ diagram: storedDiagram() }), drillB()], [], null, AT)
+  assertAllowlistedKeys(sess)
+  assertEquals(sess.referencedDrills[0].diagram?.elements.length, 7)
+  assertEquals(sess.referencedDrills[1].diagram, null)
+  assert(validatePublicSessionSnapshot(toPublicSessionProjection(sess)))
+
+  const { p, templates, drills, media: m } = twoWeeks()
+  drills[1].diagram = storedDiagram()
+  const prog = buildProgrammeSnapshot(p, templates, drills, m, AT)
+  assertAllowlistedKeys(prog)
+  const byRef = new Map(prog.referencedDrills.map((d) => [d.title, d]))
+  assertEquals(byRef.get('Third man run')?.diagram?.elements.length, 7)
+  assertEquals(byRef.get('Rondo under pressure')?.diagram, null)
+  assert(validatePublicProgrammeSnapshot(toPublicProgrammeProjection(prog)))
+
+  // No element id and no real uuid anywhere in any of them.
+  for (const flat of [JSON.stringify(pubDrill), JSON.stringify(toPublicSessionProjection(sess)), JSON.stringify(toPublicProgrammeProjection(prog))]) {
+    assert(!flat.includes('player-1'), 'an element id leaked')
+    assert(!flat.includes(DRILL_A) && !flat.includes(DRILL_B), 'a drill uuid leaked')
+  }
+})
+
+Deno.test('diagram: a drill with nothing to show publishes diagram: null, never an absent key', () => {
+  // Absence is reserved for a snapshot frozen before DRILL-02b. A snapshot
+  // built now always states its answer, so a reader can tell the two apart.
+  const s = buildDrillSnapshot(drill(), null, AT)
+  assert('diagram' in s)
+  assertEquals(s.diagram, null)
+  const sess = buildSessionSnapshot(session(), [drillA(), drillB()], [], null, AT)
+  for (const d of sess.referencedDrills) {
+    assert('diagram' in d)
+    assertEquals(d.diagram, null)
+  }
+})
+
+Deno.test('diagram: the scanner refuses a key outside the allow list at every level of a stored snapshot', () => {
+  const clean = buildDrillSnapshot(drill({ diagram: storedDiagram() }), null, AT)
+  const withDiagram = (mutate: (d: Record<string, unknown>) => void) => {
+    const copy = JSON.parse(JSON.stringify(clean)) as StoredDrillSnapshot & { diagram: Record<string, unknown> }
+    mutate(copy.diagram)
+    return copy
+  }
+  assertThrows(() => assertAllowlistedKeys(withDiagram((d) => { d.version = 1 })), Error, 'drill diagram')
+  assertThrows(() => assertAllowlistedKeys(withDiagram((d) => { d.playerId = 'p' })), Error, 'drill diagram')
+  assertThrows(() => assertAllowlistedKeys(withDiagram((d) => { (d.surface as Record<string, unknown>).name = 'Pitch' })), Error, 'surface')
+  assertThrows(() => assertAllowlistedKeys(withDiagram((d) => { (d.elements as Record<string, unknown>[])[0].id = 'player-1' })), Error, 'diagram player')
+  assertThrows(() => assertAllowlistedKeys(withDiagram((d) => { (d.elements as Record<string, unknown>[])[2].colour = 'blue' })), Error, 'diagram ball')
+  assertThrows(() => assertAllowlistedKeys(withDiagram((d) => { (d.elements as Record<string, unknown>[])[0].type = 'hologram' })), Error, 'unknown diagram element type')
+
+  // The same walk runs over a session's referenced drills.
+  const sess = buildSessionSnapshot(session(), [drillA({ diagram: storedDiagram() }), drillB()], [], null, AT)
+  const bad = JSON.parse(JSON.stringify(sess)) as StoredSessionSnapshot
+  ;((bad.referencedDrills[0].diagram as unknown as Record<string, unknown>).elements as Record<string, unknown>[])[0].playerId = 'p'
+  assertThrows(() => assertAllowlistedKeys(bad), Error, 'referenced drill diagram player')
+})
+
+Deno.test('diagram: the forbidden scan refuses an identity key hidden inside an element', () => {
+  for (const key of ['playerId', 'player_id', 'name', 'display_name', 'spond_member_id', 'shirt_number', 'guardian', 'email', 'phone']) {
+    const value = { diagram: { surface: { kind: 'blank', orientation: 'portrait' }, elements: [{ type: 'ball', x: 0.5, y: 0.5, [key]: 'x' }] } }
+    assertThrows(() => assertNoForbiddenKeys(value), Error, key)
+  }
+  // And the diagram key itself is no longer forbidden: it is allow listed.
+  assertNoForbiddenKeys({ diagram: null })
+  assertNoForbiddenKeys(toPublicProjection(buildDrillSnapshot(drill({ diagram: storedDiagram() }), null, AT)))
+})
+
+Deno.test('diagram: every previously forbidden key is still forbidden', () => {
+  for (
+    const key of [
+      'club_id', 'clubId', 'created_by', 'media_id', 'source_key', 'storage_path', 'token_hash', 'secret',
+      'coach_id', 'drill_id', 'session_id', 'programme_id', 'player_id', 'playerId', 'author', 'pdf_media_id',
+      'team_id', 'venue', 'start_time', 'date', 'spond_event_id', 'board_id', 'programme_week',
+      'live_activity_index', 'venue_id', 'teamIds', 'session_teams', 'bib_colour', 'bibColourOverride',
+      'register_entries', 'present', 'included_in_groups', 'marked_by', 'spond_member_id',
+      'player_spond_links', 'spond_event_responses', 'matched_by', 'rsvp', 'rsvpStatus',
+    ]
+  ) {
+    assertThrows(() => assertNoForbiddenKeys({ [key]: 1 }), Error, key)
+  }
+})
+
+Deno.test('diagram: the public validators accept a snapshot frozen before DRILL-02b, with no diagram key', () => {
+  const pubDrill = toPublicProjection(buildDrillSnapshot(drill({ diagram: storedDiagram() }), null, AT)) as unknown as Record<string, unknown>
+  delete pubDrill.diagram
+  assert(validatePublicDrillSnapshot(pubDrill), 'a frozen drill snapshot must still read')
+
+  const pubSess = toPublicSessionProjection(buildSessionSnapshot(session(), [drillA({ diagram: storedDiagram() }), drillB()], [], null, AT)) as unknown as Record<string, unknown>
+  for (const d of pubSess.referencedDrills as Record<string, unknown>[]) delete d.diagram
+  assert(validatePublicSessionSnapshot(pubSess), 'a frozen session snapshot must still read')
+
+  const { p, templates, drills, media: m } = twoWeeks()
+  const pubProg = toPublicProgrammeProjection(buildProgrammeSnapshot(p, templates, drills, m, AT)) as unknown as Record<string, unknown>
+  for (const d of pubProg.referencedDrills as Record<string, unknown>[]) delete d.diagram
+  assert(validatePublicProgrammeSnapshot(pubProg), 'a frozen programme snapshot must still read')
+})
+
+Deno.test('diagram: the public validators accept null and the exact shape, and refuse anything wider or malformed', () => {
+  const good = projectDrillDiagram(storedDiagram())
+  assert(isPublicDrillDiagram(null))
+  assert(isPublicDrillDiagram(good))
+  const bad = (mutate: (d: Record<string, unknown>) => void): unknown => {
+    const copy = JSON.parse(JSON.stringify(good)) as Record<string, unknown>
+    mutate(copy)
+    return copy
+  }
+  // undefined is the frozen case and is the caller's decision: the bare
+  // predicate refuses it, the guards read it as absent.
+  assert(!isPublicDrillDiagram(undefined))
+  const cases: Array<[string, unknown]> = [
+    ['a string', 'diagram'],
+    ['an array', []],
+    ['a stored version key', bad((d) => { d.version = 1 })],
+    ['an element id', bad((d) => { (d.elements as Record<string, unknown>[])[0].id = 'player-1' })],
+    ['an unknown element type', bad((d) => { (d.elements as Record<string, unknown>[])[0].type = 'hologram' })],
+    ['a key outside the type', bad((d) => { (d.elements as Record<string, unknown>[])[2].label = '9' })],
+    ['an identity key', bad((d) => { (d.elements as Record<string, unknown>[])[0].playerId = 'p' })],
+    ['a NaN coordinate', bad((d) => { (d.elements as Record<string, unknown>[])[2].x = Number.NaN })],
+    ['a coordinate off the surface', bad((d) => { (d.elements as Record<string, unknown>[])[2].y = 1.5 })],
+    ['a string coordinate', bad((d) => { (d.elements as Record<string, unknown>[])[2].x = '0.5' })],
+    ['a label over the cap', bad((d) => { (d.elements as Record<string, unknown>[])[0].label = 'ABCD' })],
+    ['a text over the cap', bad((d) => { (d.elements as Record<string, unknown>[])[6].text = 'A'.repeat(MAX_DIAGRAM_TEXT + 1) })],
+    ['an empty text', bad((d) => { (d.elements as Record<string, unknown>[])[6].text = '' })],
+    ['an unknown colour', bad((d) => { (d.elements as Record<string, unknown>[])[0].colour = 'purple' })],
+    ['an unknown facing', bad((d) => { (d.elements as Record<string, unknown>[])[3].facing = 'sideways' })],
+    ['an unknown arrow', bad((d) => { (d.elements as Record<string, unknown>[])[4].arrow = 'teleport' })],
+    ['an unknown surface kind', bad((d) => { (d.surface as Record<string, unknown>).kind = 'ice_rink' })],
+    ['an extra surface key', bad((d) => { (d.surface as Record<string, unknown>).name = 'Pitch 3' })],
+    ['no elements at all', bad((d) => { d.elements = [] })],
+    ['over the element cap', bad((d) => { d.elements = Array.from({ length: MAX_DIAGRAM_ELEMENTS + 1 }, () => ({ type: 'ball', x: 0.5, y: 0.5 })) })],
+  ]
+  for (const [label, value] of cases) {
+    assert(!isPublicDrillDiagram(value), `accepted ${label}`)
+    // And through the drill guard, so the whole snapshot fails closed.
+    const s = toPublicProjection(buildDrillSnapshot(drill({ diagram: storedDiagram() }), null, AT)) as unknown as Record<string, unknown>
+    s.diagram = value
+    assert(!validatePublicDrillSnapshot(s), `the drill guard accepted ${label}`)
+  }
+})
+
+Deno.test('diagram: a maximal diagram is bounded in bytes, so a session of drawn drills stays under the snapshot cap', () => {
+  // The widest public element is an arrow with the longest arrow word.
+  const widest = Array.from({ length: MAX_DIAGRAM_ELEMENTS }, (_, i) => ({
+    type: 'arrow', id: `arrow-${i}`, x1: 0.1234, y1: 0.5678, x2: 0.9012, y2: 0.3456, arrow: 'dribble',
+  }))
+  const d = projectDrillDiagram(storedDiagram({ elements: widest }))
+  const bytes = new TextEncoder().encode(JSON.stringify(d)).length
+  assert(bytes < 6 * 1024, `a maximal diagram is ${bytes} bytes`)
+  // Six drawn activities, the busy end of a real session, is far inside the cap.
+  const drills = Array.from({ length: 6 }, (_, i) => drill({ id: `${i}1111111-1111-1111-1111-111111111111`, club_id: CLUB, diagram: storedDiagram({ elements: widest }) }))
+  const s = buildSessionSnapshot(
+    session({ activities: drills.map((dr) => ({ phase: 'Skill', drill_id: dr.id, duration: 10 })) }),
+    drills,
+    [],
+    null,
+    AT,
+  )
+  const total = new TextEncoder().encode(JSON.stringify(s)).length
+  assert(total < MAX_SNAPSHOT_BYTES / 4, `six maximal diagrams took ${total} bytes`)
+})
+
+Deno.test('diagram: the builder is deterministic with a diagram', () => {
+  const a = buildDrillSnapshot(drill({ diagram: storedDiagram() }), null, AT)
+  const b = buildDrillSnapshot(drill({ diagram: storedDiagram() }), null, AT)
+  assertEquals(JSON.stringify(a), JSON.stringify(b))
 })

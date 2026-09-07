@@ -4,13 +4,22 @@
 //   - the coach's pre-publish preview (mode="preview"), and
 //   - the anonymous public page (mode="public").
 //
-// It imports only React and the pure publicShare types, so the anonymous page
-// can render a shared drill without pulling in the authenticated data layer
-// (queries.ts, useAuth) or the app UI kit. All free text renders as React text
-// nodes (never innerHTML), so nothing rich or active can execute; the server
-// side builder already stripped tags and scripts, and this is the second layer.
+// It imports only React, the pure publicShare types, the pure public diagram
+// adapter and the canonical diagram renderer, so the anonymous page can render
+// a shared drill without pulling in the authenticated data layer (queries.ts,
+// useAuth) or the app UI kit. All free text renders as React text nodes (never
+// innerHTML), so nothing rich or active can execute; the server side builder
+// already stripped tags and scripts, and this is the second layer.
+//
+// The diagram (DRILL-02b) is drawn by DrillDiagramView, the one renderer, from
+// the already validated public projection: this file draws no SVG of its own
+// and reads no live row. Preview and public modes show the same picture, so a
+// coach sees exactly the drawing that becomes public. A snapshot frozen before
+// DRILL-02b has no diagram key and renders no diagram block.
 
 import type { PublicDrillMedia, PublicDrillSnapshot } from '../lib/publicShare'
+import { toDrillDiagram } from '../lib/publicDiagram'
+import { DrillDiagramView } from './DrillDiagramView'
 
 // Exported so the session renderer (PublicSessionView) reuses the exact same
 // header pills, text blocks and list blocks as a drill, for one visual system.
@@ -130,6 +139,13 @@ export function PublicDrillView({
       <ListBlock heading="Coaching points" items={snapshot.coachingPoints} />
       <ListBlock heading="Make it easier" items={snapshot.easier} />
       <ListBlock heading="Make it harder" items={snapshot.harder} />
+
+      {snapshot.diagram && (
+        <section className="public-block public-diagram">
+          <h2 className="public-block-head">Diagram</h2>
+          <DrillDiagramView diagram={toDrillDiagram(snapshot.diagram)} className="dd-in-public" />
+        </section>
+      )}
 
       {snapshot.media.length > 0 && (
         <section className="public-block">

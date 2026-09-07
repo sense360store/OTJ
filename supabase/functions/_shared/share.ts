@@ -97,6 +97,11 @@ export interface DrillRow {
   source_key?: string | null
   media_id: string | null
   rights: ContentRights
+  // The saved Drill Maker diagram (drills.diagram, 0046), read by the sharing
+  // builders since DRILL-02b and projected ONLY through projectDrillDiagram's
+  // allow list below. Optional so a caller that predates the column still
+  // compiles; absent, null and unreadable all project as no diagram.
+  diagram?: unknown
 }
 
 export interface MediaRow {
@@ -162,6 +167,8 @@ interface DrillSnapshotBase {
   theme: string | null
   format: string | null
   sourceAttribution: SourceAttribution | null
+  // The public diagram projection (DRILL-02b). See DrillFields.diagram.
+  diagram: PublicDrillDiagram | null
   snapshotAt: string
 }
 
@@ -422,6 +429,317 @@ function numOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+// -------------------------------------------------------------------------
+// The drill diagram projection (DRILL-02b)
+// -------------------------------------------------------------------------
+//
+// A drill's saved Drill Maker diagram (drills.diagram, migration 0046) is the
+// one coach authored STRUCTURE this module publishes beyond flat text, and it
+// is published through a positive allow list of its own, the same discipline
+// as the board tokens. The rules, in order of how much they matter:
+//
+//   - IT IS A DELIBERATE DUPLICATE of the client's parseDrillDiagram
+//     (src/lib/drillDiagram.ts), for the reason isStoodDownActivity states:
+//     an Edge Function cannot import from src/lib/, so the choice is one
+//     allow list written twice and tested at both ends, or a cross runtime
+//     import. It is written twice, and share_test.ts pins the element shapes
+//     against the seven the client writes and the 0046 check constraint
+//     allows, so the three cannot drift silently.
+//   - THE PUBLIC SHAPE IS NARROWER THAN THE STORED ONE. An element's `id` is
+//     never projected: it is a free text column value a React key does not
+//     need, and dropping it leaves exactly two free text fields in a diagram,
+//     the player badge (three characters) and the label (twenty four), both of
+//     which pass through sanitizeText. The diagram's `version` is not projected
+//     either; the snapshot version pins the shape.
+//   - NOTHING CARRIES A PERSON, structurally. The seven shapes below name every
+//     key that can exist, and none is an identity: no playerId, no name, no
+//     member id, no shirt number. A key outside the shape is dropped on the
+//     way in and refused by the scanner on the way out.
+//   - AN ENGLAND FOOTBALL DERIVED DRILL PROJECTS NO DIAGRAM, whatever the row
+//     holds. The club's licence allows FA images unmodified and never redrawn,
+//     and a hand drawn diagram on an FA drill is that redrawing. This mirrors
+//     diagramForDisplay in src/lib/drillDiagramRights.ts: the authenticated
+//     surfaces do not show one, so the public copy does not either. The FA's
+//     own image still travels through the media pool under its attribution.
+//   - COORDINATES ARE FRACTIONS, clamped to 0..1 and rounded to four places,
+//     so the public copy is the same drawing the coach saw and a stray value
+//     cannot place an element off the surface. Text and label are capped.
+//   - AN EMPTY OR UNREADABLE DIAGRAM PROJECTS AS NULL, which is what a drill
+//     with no diagram projects too. Only the stored version is refused whole:
+//     a future shape read as version 1 would be drawn wrongly, and a wrong
+//     drawing is worse than none. Everything else fails towards the coach's
+//     work, element by element, the same asymmetry the client parser uses.
+//
+// The frozen share rule: a snapshot built before this projection existed has
+// no `diagram` key on its drill fields at all. Both scanners and both
+// validators accept that absence, so every existing link keeps serving what
+// it froze, and it gains a diagram only when its owner rebuilds it (refresh).
+
+export const DIAGRAM_VERSION = 1
+export const MAX_DIAGRAM_ELEMENTS = 60
+export const MAX_DIAGRAM_TEXT = 24
+export const MAX_DIAGRAM_LABEL = 3
+const MIN_ZONE_SIZE = 0.04
+const MIN_GOAL_WIDTH = 0.06
+const MAX_GOAL_WIDTH = 0.6
+const DIAGRAM_COORD_DP = 4
+
+export const DIAGRAM_SURFACE_KINDS = ['full_pitch', 'half_pitch', 'blank'] as const
+export const DIAGRAM_ORIENTATIONS = ['portrait', 'landscape'] as const
+export const DIAGRAM_COLOURS = ['blue', 'red', 'yellow', 'green', 'orange', 'white', 'black'] as const
+export const DIAGRAM_ARROWS = ['run', 'pass', 'dribble'] as const
+export const DIAGRAM_FACINGS = ['up', 'down', 'left', 'right'] as const
+export const DIAGRAM_ELEMENT_TYPES = ['player', 'cone', 'ball', 'goal', 'arrow', 'zone', 'text'] as const
+
+export type DiagramSurfaceKind = (typeof DIAGRAM_SURFACE_KINDS)[number]
+export type DiagramOrientation = (typeof DIAGRAM_ORIENTATIONS)[number]
+export type DiagramColour = (typeof DIAGRAM_COLOURS)[number]
+export type DiagramArrow = (typeof DIAGRAM_ARROWS)[number]
+export type DiagramFacing = (typeof DIAGRAM_FACINGS)[number]
+export type DiagramElementType = (typeof DIAGRAM_ELEMENT_TYPES)[number]
+
+export interface PublicDiagramSurface {
+  kind: DiagramSurfaceKind
+  orientation: DiagramOrientation
+}
+
+// The seven public element shapes. Each is an exact field set with no id.
+export type PublicDiagramElement =
+  | { type: 'player'; x: number; y: number; colour: DiagramColour; label: string }
+  | { type: 'cone'; x: number; y: number; colour: DiagramColour }
+  | { type: 'ball'; x: number; y: number }
+  | { type: 'goal'; x: number; y: number; width: number; facing: DiagramFacing }
+  | { type: 'arrow'; x1: number; y1: number; x2: number; y2: number; arrow: DiagramArrow }
+  | { type: 'zone'; x: number; y: number; w: number; h: number; colour: DiagramColour }
+  | { type: 'text'; x: number; y: number; text: string }
+
+export interface PublicDrillDiagram {
+  surface: PublicDiagramSurface
+  elements: PublicDiagramElement[]
+}
+
+// The allow list per element type: the whole public shape, stated once and
+// used by the projection (what it emits), the scanner (what a stored snapshot
+// may carry) and the validators (what the browser may receive).
+const DIAGRAM_ALLOWED = new Set<string>(['surface', 'elements'])
+const DIAGRAM_SURFACE_ALLOWED = new Set<string>(['kind', 'orientation'])
+const DIAGRAM_ELEMENT_ALLOWED: Record<DiagramElementType, Set<string>> = {
+  player: new Set(['type', 'x', 'y', 'colour', 'label']),
+  cone: new Set(['type', 'x', 'y', 'colour']),
+  ball: new Set(['type', 'x', 'y']),
+  goal: new Set(['type', 'x', 'y', 'width', 'facing']),
+  arrow: new Set(['type', 'x1', 'y1', 'x2', 'y2', 'arrow']),
+  zone: new Set(['type', 'x', 'y', 'w', 'h', 'colour']),
+  text: new Set(['type', 'x', 'y', 'text']),
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function inVocab<T extends string>(vocab: readonly T[], v: unknown): v is T {
+  return typeof v === 'string' && (vocab as readonly string[]).includes(v)
+}
+
+function clampNumber(n: number, lo: number, hi: number): number {
+  return n < lo ? lo : n > hi ? hi : n
+}
+
+// A finite fraction pulled onto the surface and rounded, or null when there is
+// no honest number: out of range is a stale value and is clamped; NaN,
+// Infinity and a non number are corruption and drop the element.
+function diagramFraction(v: unknown): number | null {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null
+  const f = 10 ** DIAGRAM_COORD_DP
+  return Math.round(clampNumber(v, 0, 1) * f) / f
+}
+
+function diagramColour(v: unknown): DiagramColour {
+  return inVocab(DIAGRAM_COLOURS, v) ? v : 'blue'
+}
+
+// One element, rebuilt field by field from its allow list. Returns null to
+// drop it. Never spreads its input, so no key it does not name can leave it.
+function projectDiagramElement(raw: unknown): PublicDiagramElement | null {
+  if (!isPlainObject(raw)) return null
+  switch (raw.type) {
+    case 'player': {
+      const x = diagramFraction(raw.x)
+      const y = diagramFraction(raw.y)
+      if (x === null || y === null) return null
+      return { type: 'player', x, y, colour: diagramColour(raw.colour), label: sanitizeText(raw.label, MAX_DIAGRAM_LABEL) ?? '' }
+    }
+    case 'cone': {
+      const x = diagramFraction(raw.x)
+      const y = diagramFraction(raw.y)
+      if (x === null || y === null) return null
+      return { type: 'cone', x, y, colour: diagramColour(raw.colour) }
+    }
+    case 'ball': {
+      const x = diagramFraction(raw.x)
+      const y = diagramFraction(raw.y)
+      if (x === null || y === null) return null
+      return { type: 'ball', x, y }
+    }
+    case 'goal': {
+      const x = diagramFraction(raw.x)
+      const y = diagramFraction(raw.y)
+      if (x === null || y === null) return null
+      const w = typeof raw.width === 'number' && Number.isFinite(raw.width) ? raw.width : 0.24
+      return {
+        type: 'goal',
+        x,
+        y,
+        width: diagramFraction(clampNumber(w, MIN_GOAL_WIDTH, MAX_GOAL_WIDTH)) as number,
+        facing: inVocab(DIAGRAM_FACINGS, raw.facing) ? raw.facing : 'up',
+      }
+    }
+    case 'arrow': {
+      const x1 = diagramFraction(raw.x1)
+      const y1 = diagramFraction(raw.y1)
+      const x2 = diagramFraction(raw.x2)
+      const y2 = diagramFraction(raw.y2)
+      if (x1 === null || y1 === null || x2 === null || y2 === null) return null
+      return { type: 'arrow', x1, y1, x2, y2, arrow: inVocab(DIAGRAM_ARROWS, raw.arrow) ? raw.arrow : 'run' }
+    }
+    case 'zone': {
+      const x = diagramFraction(raw.x)
+      const y = diagramFraction(raw.y)
+      if (x === null || y === null) return null
+      const rawW = typeof raw.w === 'number' && Number.isFinite(raw.w) ? Math.abs(raw.w) : MIN_ZONE_SIZE
+      const rawH = typeof raw.h === 'number' && Number.isFinite(raw.h) ? Math.abs(raw.h) : MIN_ZONE_SIZE
+      const w = diagramFraction(clampNumber(rawW, MIN_ZONE_SIZE, 1)) as number
+      const h = diagramFraction(clampNumber(rawH, MIN_ZONE_SIZE, 1)) as number
+      return {
+        type: 'zone',
+        x: diagramFraction(clampNumber(x, 0, 1 - w)) as number,
+        y: diagramFraction(clampNumber(y, 0, 1 - h)) as number,
+        w,
+        h,
+        colour: diagramColour(raw.colour),
+      }
+    }
+    case 'text': {
+      const x = diagramFraction(raw.x)
+      const y = diagramFraction(raw.y)
+      if (x === null || y === null) return null
+      const text = sanitizeText(raw.text, MAX_DIAGRAM_TEXT)
+      // A label with nothing left in it draws nothing, so it goes.
+      if (text === null) return null
+      return { type: 'text', x, y, text }
+    }
+    default:
+      return null
+  }
+}
+
+// Project a stored diagram column value into its public shape, or null when
+// there is nothing to show. The caller decides whether the drill may carry one
+// at all (projectDrillFields applies the England Football rule).
+export function projectDrillDiagram(value: unknown): PublicDrillDiagram | null {
+  if (!isPlainObject(value)) return null
+  if (value.version !== DIAGRAM_VERSION) return null
+  if (!Array.isArray(value.elements)) return null
+  const rawSurface = value.surface
+  const surface: PublicDiagramSurface = {
+    kind: isPlainObject(rawSurface) && inVocab(DIAGRAM_SURFACE_KINDS, rawSurface.kind) ? rawSurface.kind : 'full_pitch',
+    orientation: isPlainObject(rawSurface) && rawSurface.orientation === 'landscape' ? 'landscape' : 'portrait',
+  }
+  const elements: PublicDiagramElement[] = []
+  // The client parser keeps the first element under a repeated id and drops
+  // the rest, so the public copy does the same. The id is read for that one
+  // comparison and never emitted.
+  const seen = new Set<string>()
+  for (const raw of value.elements as unknown[]) {
+    if (elements.length >= MAX_DIAGRAM_ELEMENTS) break
+    if (!isPlainObject(raw) || typeof raw.id !== 'string' || raw.id.trim() === '') continue
+    const key = raw.id.trim().slice(0, 64)
+    if (seen.has(key)) continue
+    const el = projectDiagramElement(raw)
+    if (!el) continue
+    seen.add(key)
+    elements.push(el)
+  }
+  if (elements.length === 0) return null
+  return { surface, elements }
+}
+
+// Assert a diagram carries only allow listed keys at every level. Used by the
+// stored snapshot scanner, so a key outside the shape throws at build time.
+function assertDiagramKeys(value: unknown, where: string): void {
+  if (value === null || value === undefined) return
+  if (!isPlainObject(value)) throw new Error(`snapshot allow list: ${where} diagram not an object`)
+  assertKeysWithin(value, DIAGRAM_ALLOWED, `${where} diagram`)
+  if (isPlainObject(value.surface)) {
+    assertKeysWithin(value.surface, DIAGRAM_SURFACE_ALLOWED, `${where} diagram surface`)
+  }
+  if (Array.isArray(value.elements)) {
+    for (const el of value.elements as unknown[]) {
+      if (!isPlainObject(el)) throw new Error(`snapshot allow list: ${where} diagram element not an object`)
+      if (!inVocab(DIAGRAM_ELEMENT_TYPES, el.type)) {
+        throw new Error(`snapshot allow list: unknown diagram element type at ${where}`)
+      }
+      assertKeysWithin(el, DIAGRAM_ELEMENT_ALLOWED[el.type], `${where} diagram ${el.type}`)
+    }
+  }
+}
+
+function isFraction(v: unknown): boolean {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1
+}
+
+// Whether a value is a well formed PUBLIC diagram: the exact shape the
+// projection emits, and nothing looser. Used by the three public validators.
+// Absence (undefined) is a frozen snapshot and is accepted by the caller, not
+// here; null is a drill with nothing to show and is accepted here.
+export function isPublicDrillDiagram(value: unknown): value is PublicDrillDiagram | null {
+  if (value === null) return true
+  try {
+    assertDiagramKeys(value, 'public')
+  } catch {
+    return false
+  }
+  if (!isPlainObject(value)) return false
+  if (!isPlainObject(value.surface)) return false
+  if (!inVocab(DIAGRAM_SURFACE_KINDS, value.surface.kind)) return false
+  if (!inVocab(DIAGRAM_ORIENTATIONS, value.surface.orientation)) return false
+  if (!Array.isArray(value.elements)) return false
+  if (value.elements.length === 0 || value.elements.length > MAX_DIAGRAM_ELEMENTS) return false
+  for (const raw of value.elements as Record<string, unknown>[]) {
+    switch (raw.type) {
+      case 'player':
+        if (!isFraction(raw.x) || !isFraction(raw.y) || !inVocab(DIAGRAM_COLOURS, raw.colour)) return false
+        if (typeof raw.label !== 'string' || raw.label.length > MAX_DIAGRAM_LABEL) return false
+        break
+      case 'cone':
+        if (!isFraction(raw.x) || !isFraction(raw.y) || !inVocab(DIAGRAM_COLOURS, raw.colour)) return false
+        break
+      case 'ball':
+        if (!isFraction(raw.x) || !isFraction(raw.y)) return false
+        break
+      case 'goal':
+        if (!isFraction(raw.x) || !isFraction(raw.y) || !isFraction(raw.width)) return false
+        if (!inVocab(DIAGRAM_FACINGS, raw.facing)) return false
+        break
+      case 'arrow':
+        if (!isFraction(raw.x1) || !isFraction(raw.y1) || !isFraction(raw.x2) || !isFraction(raw.y2)) return false
+        if (!inVocab(DIAGRAM_ARROWS, raw.arrow)) return false
+        break
+      case 'zone':
+        if (!isFraction(raw.x) || !isFraction(raw.y) || !isFraction(raw.w) || !isFraction(raw.h)) return false
+        if (!inVocab(DIAGRAM_COLOURS, raw.colour)) return false
+        break
+      case 'text':
+        if (!isFraction(raw.x) || !isFraction(raw.y)) return false
+        if (typeof raw.text !== 'string' || raw.text.length === 0 || raw.text.length > MAX_DIAGRAM_TEXT) return false
+        break
+      default:
+        return false
+    }
+  }
+  return true
+}
+
 // The presentational drill fields shared by a standalone drill snapshot and a
 // drill referenced inside a session snapshot. No media (a standalone snapshot
 // embeds a top-level media array; a referenced drill points into the session
@@ -444,6 +762,10 @@ export interface DrillFields {
   theme: string | null
   format: string | null
   sourceAttribution: SourceAttribution | null
+  // The public diagram projection (DRILL-02b), or null when the drill has no
+  // diagram to show. Always present on a snapshot built since DRILL-02b;
+  // absent on a snapshot frozen before it, which every reader accepts.
+  diagram: PublicDrillDiagram | null
 }
 
 // Project the safe presentational fields of a drill through the allow list.
@@ -473,6 +795,11 @@ function projectDrillFields(drill: DrillRow): DrillFields {
     theme: sanitizeText(drill.theme, 200),
     format: sanitizeText(drill.format, 200),
     sourceAttribution: attributionOf(drill.source_url, drill.source_label),
+    // The England Football rule, applied HERE so both the standalone drill and
+    // every referenced drill get the same answer: a redrawn FA diagram is
+    // outside the club's licence and is never published, whatever the row
+    // holds. Provenance is the row's recorded source, never its rights value.
+    diagram: rowProvenance(drill) === 'fa' ? null : projectDrillDiagram(drill.diagram),
   }
 }
 
@@ -1350,7 +1677,7 @@ const TOP_ALLOWED = new Set<string>([
   'snapshotVersion', 'kind', 'title', 'summary', 'classification', 'skill', 'ages',
   'level', 'duration', 'playerGuidance', 'area', 'equipment', 'setupNotes',
   'coachingPoints', 'easier', 'harder', 'theme', 'format', 'sourceAttribution',
-  'media', 'snapshotAt', 'builder', 'public',
+  'diagram', 'media', 'snapshotAt', 'builder', 'public',
 ])
 const CLASSIFICATION_ALLOWED = new Set<string>(['type', 'value'])
 const ATTRIBUTION_ALLOWED = new Set<string>(['url', 'label'])
@@ -1367,7 +1694,7 @@ const ACTIVITY_ALLOWED = new Set<string>(['phase', 'duration', 'drillRef', 'cust
 const REF_DRILL_ALLOWED = new Set<string>([
   'ref', 'title', 'summary', 'classification', 'skill', 'ages', 'level', 'duration',
   'playerGuidance', 'area', 'equipment', 'setupNotes', 'coachingPoints', 'easier',
-  'harder', 'theme', 'format', 'sourceAttribution', 'mediaRefs',
+  'harder', 'theme', 'format', 'sourceAttribution', 'diagram', 'mediaRefs',
 ])
 const BOARD_ALLOWED = new Set<string>(['formation', 'tokens'])
 const BOARD_TOKEN_ALLOWED = new Set<string>(['number', 'side', 'x', 'y'])
@@ -1415,15 +1742,16 @@ const FORBIDDEN_ANYWHERE = [
   'spond_member_id', 'spondMemberId', 'player_spond_links', 'playerSpondLinks',
   'spond_event_responses', 'spondEventResponses', 'matched_by', 'matchedBy',
   'rsvp', 'rsvpStatus',
-  // The drill diagram (0046). Drill Maker C1 does not publish a diagram: the
-  // positive allow list in projectDrillFields never copies it, so nothing
-  // reaches a snapshot today. Naming it here is the tripwire, and it matters
-  // more than most because a share is a FROZEN COPY: once a key lands in
-  // content_shares.snapshot the read path serves it until the link is revoked,
-  // and no later fix to the projection can take it back. A diagram also carries
-  // free text a coach typed, so publishing one is a decision to review, not a
-  // side effect of adding a column.
-  'diagram',
+  // The drill diagram (0046) is published since DRILL-02b, through the
+  // positive allow list in projectDrillDiagram, and is no longer named here.
+  // What replaces its entry is the set of identity keys the 0046 boundary
+  // names as the things no diagram element may ever hold. None of them exists
+  // in any projection today; naming them means a future shape that carried
+  // one trips the scanner rather than leaks, which matters more than most
+  // because a share is a FROZEN COPY: once a key lands in
+  // content_shares.snapshot the read path serves it until the link is revoked.
+  'name', 'display_name', 'displayName', 'full_name', 'fullName', 'guardian',
+  'email', 'phone', 'shirt_number', 'shirtNumber',
 ]
 
 function assertKeysWithin(obj: Record<string, unknown>, allowed: Set<string>, where: string): void {
@@ -1464,6 +1792,7 @@ export function assertAllowlistedKeys(snapshot: unknown): void {
   if (s.sourceAttribution && typeof s.sourceAttribution === 'object') {
     assertKeysWithin(s.sourceAttribution as Record<string, unknown>, ATTRIBUTION_ALLOWED, 'sourceAttribution')
   }
+  assertDiagramKeys(s.diagram, 'drill')
   assertMediaArrayKeys(s.media)
 }
 
@@ -1506,6 +1835,7 @@ function assertAllowlistedSessionKeys(s: Record<string, unknown>): void {
       if (dr.sourceAttribution && typeof dr.sourceAttribution === 'object') {
         assertKeysWithin(dr.sourceAttribution as Record<string, unknown>, ATTRIBUTION_ALLOWED, 'referenced drill sourceAttribution')
       }
+      assertDiagramKeys(dr.diagram, 'referenced drill')
     }
   }
   if (s.board && typeof s.board === 'object' && !Array.isArray(s.board)) {
@@ -1553,6 +1883,7 @@ function assertAllowlistedProgrammeKeys(s: Record<string, unknown>): void {
       if (dr.sourceAttribution && typeof dr.sourceAttribution === 'object') {
         assertKeysWithin(dr.sourceAttribution as Record<string, unknown>, ATTRIBUTION_ALLOWED, 'referenced drill sourceAttribution')
       }
+      assertDiagramKeys(dr.diagram, 'referenced drill')
     }
   }
   if (s.pdf && typeof s.pdf === 'object' && !Array.isArray(s.pdf)) {
@@ -1616,6 +1947,9 @@ export function validatePublicDrillSnapshot(value: unknown): value is PublicDril
   try {
     const publicTop = new Set([...TOP_ALLOWED].filter((k) => k !== 'builder' && k !== 'public'))
     assertKeysWithin(s, publicTop, 'public top level')
+    // Absent means frozen before DRILL-02b and is accepted; present means the
+    // exact public shape or nothing.
+    if (s.diagram !== undefined && !isPublicDrillDiagram(s.diagram)) return false
     if (!Array.isArray(s.media)) return false
     for (const m of s.media as unknown[]) {
       if (!m || typeof m !== 'object') return false
@@ -1674,6 +2008,8 @@ export function validatePublicSessionSnapshot(value: unknown): value is PublicSe
     for (const d of s.referencedDrills as unknown[]) {
       if (!d || typeof d !== 'object') return false
       assertKeysWithin(d as Record<string, unknown>, REF_DRILL_ALLOWED, 'public referenced drill')
+      const diagram = (d as Record<string, unknown>).diagram
+      if (diagram !== undefined && !isPublicDrillDiagram(diagram)) return false
     }
     if (s.board !== null) {
       if (!s.board || typeof s.board !== 'object' || Array.isArray(s.board)) return false
@@ -1740,6 +2076,7 @@ export function validatePublicProgrammeSnapshot(value: unknown): value is Public
       if (!d || typeof d !== 'object') return false
       assertKeysWithin(d as Record<string, unknown>, REF_DRILL_ALLOWED, 'public referenced drill')
       const dr = d as Record<string, unknown>
+      if (dr.diagram !== undefined && !isPublicDrillDiagram(dr.diagram)) return false
       if (typeof dr.ref === 'string') drillRefs.add(dr.ref)
       // Every media ref a drill points at must exist in the pool.
       if (!Array.isArray(dr.mediaRefs)) return false

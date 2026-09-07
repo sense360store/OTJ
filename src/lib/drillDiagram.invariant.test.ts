@@ -158,10 +158,12 @@ describe('the diagram save writes the diagram and nothing else', () => {
   })
 
   it('keeps the diagram out of the whole drill write and out of every drill read', () => {
-    // SOURCE TEXT. The point of the separation is that no OTHER drill path
-    // learns about the column: not the library list, not the planner, not the
-    // share snapshot builders. Adding it to either constant would undo that in
-    // one line, and nothing behavioural would notice until something leaked.
+    // SOURCE TEXT. The point of the separation is that no OTHER client drill
+    // path learns about the column: not the library list, not the planner.
+    // Adding it to either constant would undo that in one line, and nothing
+    // behavioural would notice until something leaked. The server side share
+    // builder is the one reviewed reader outside this hook (DRILL-02b), and
+    // it is pinned below and in publicShare.invariant.test.ts.
     const q = read('lib/queries.ts')
     const drillCols = /const DRILL_COLS =\s*\n?\s*'([^']*)'/.exec(q)
     expect(drillCols, 'DRILL_COLS could not be read').toBeTruthy()
@@ -441,60 +443,111 @@ describe('one renderer draws a diagram', () => {
   })
 })
 
-describe('the diagram stays out of a public link', () => {
-  it('is not projected into a public drill snapshot', () => {
-    // BEHAVIOURAL, against the REAL Edge Function builder. A drill row carrying
-    // a diagram builds a snapshot without one, and the builder's own
-    // assertAllowlistedKeys would throw if it ever did carry one.
-    const row = {
-      id: 'd1',
-      club_id: 'c1',
-      title: 'Rondo 4v1',
-      summary: 'Keep the ball.',
-      corner: 'technical',
-      skill: 'Passing',
-      level: 'Foundation',
-      ages: ['U9'],
-      duration: 15,
-      players: '5',
-      area: '12x12',
-      equipment: ['Cones'],
-      points: [],
-      tags: [],
-      media_id: null,
-      setup_notes: null,
-      easier: [],
-      harder: [],
-      theme: null,
-      format: null,
-      source_url: null,
-      source_label: null,
-      source_key: null,
-      rights: 'public_full',
-      // The column this whole section exists for.
-      diagram: serializeDrillDiagram(withAll()),
-    }
-    const snapshot = buildDrillSnapshot(row as never, null, '2026-08-11T00:00:00Z')
-    const json = JSON.stringify(snapshot)
-    expect(Object.keys(snapshot)).not.toContain('diagram')
-    expect(json).not.toContain('diagram')
-    expect(json).not.toContain('elements')
-    // And the drill itself did project: this is not passing because the builder
-    // returned nothing.
-    expect(json).toContain('Rondo 4v1')
+describe('the diagram reaches a public link only through the reviewed projection', () => {
+  // DRILL-02b. Until this change the rule here was "the diagram stays out of a
+  // public link", pinned by both deny lists. The decision to publish a
+  // coach drawn diagram was taken, reviewed and built, and what these tests
+  // now pin is the SHAPE of that publication rather than its absence: the
+  // real Edge builder projects it through a positive allow list of its own,
+  // the England Football rule holds on the public copy as it does on every
+  // authenticated surface, and no identity can ride along. The server half of
+  // the contract is supabase/functions/_shared/share_test.ts and the parity
+  // between the two runtimes is src/lib/publicShare.invariant.test.ts.
+  const row = () => ({
+    id: 'd1',
+    club_id: 'c1',
+    title: 'Rondo 4v1',
+    summary: 'Keep the ball.',
+    corner: 'technical',
+    skill: 'Passing',
+    level: 'Foundation',
+    ages: ['U9'],
+    duration: 15,
+    players: '5',
+    area: '12x12',
+    equipment: ['Cones'],
+    points: [],
+    tags: [],
+    media_id: null,
+    setup_notes: null,
+    easier: [],
+    harder: [],
+    theme: null,
+    format: null,
+    source_url: null,
+    source_label: null,
+    source_key: null,
+    rights: 'public_full' as const,
+    // The column this whole section exists for, in exactly the stored form
+    // the client writes.
+    diagram: serializeDrillDiagram(withAll()),
   })
 
-  it('is named in both deny lists, so a future projection throws instead of shipping', () => {
-    // SOURCE TEXT, and it is the cheap half of a real protection: the positive
-    // allow list is what actually keeps the diagram out. This names it in the
-    // belt and braces list on both sides, which matters more here than
-    // elsewhere because a share is a FROZEN COPY: once a key reaches
-    // content_shares.snapshot the read path serves it until the link is
-    // revoked, and no later fix to the projection takes it back.
-    expect(read('lib/publicShare.ts')).toContain("'diagram',")
+  it('is projected into a public drill snapshot by the real builder, without element ids', () => {
+    // BEHAVIOURAL, against the REAL Edge Function builder.
+    const snapshot = buildDrillSnapshot(row() as never, null, '2026-08-11T00:00:00Z')
+    expect(snapshot.diagram).not.toBeNull()
+    expect(snapshot.diagram?.elements.map((e) => e.type)).toEqual(ALL.map((e) => e.type))
+    const json = JSON.stringify(snapshot.diagram)
+    // The public copy carries no stored id and no stored version.
+    expect(json).not.toContain('"id"')
+    expect(json).not.toContain('version')
+    expect(json).toContain('Press')
+    expect(json).toContain('"label":"9"')
+  })
+
+  it('is never projected for an England Football derived drill, whatever the row holds', () => {
+    // BEHAVIOURAL. The same rule diagramForDisplay applies on the planner,
+    // session day and both live stages: the licence excludes a redrawn FA
+    // diagram wherever it renders, and a public link is a place it renders.
+    const fa = buildDrillSnapshot(
+      { ...row(), source_url: 'https://learn.englandfootball.com/coaching/activity/abc' } as never,
+      null,
+      '2026-08-11T00:00:00Z',
+    )
+    expect(fa.diagram).toBeNull()
+    // And the drill itself did project: this is not passing because the
+    // builder returned nothing.
+    expect(JSON.stringify(fa)).toContain('Rondo 4v1')
+  })
+
+  it('drops an identity shaped key on the way into a public copy', () => {
+    // BEHAVIOURAL. The projection rebuilds each element from its allow list,
+    // exactly as parseDrillDiagram does, so nothing that reached the column
+    // by another path can reach a link.
+    const stored = serializeDrillDiagram(withAll()) as { elements: Record<string, unknown>[] }
+    stored.elements[0].playerId = 'p-secret'
+    stored.elements[0].name = 'Riley'
+    stored.elements[0].spond_member_id = 'ABCDEF'
+    const snapshot = buildDrillSnapshot({ ...row(), diagram: stored } as never, null, '2026-08-11T00:00:00Z')
+    const json = JSON.stringify(snapshot)
+    for (const leaked of ['p-secret', 'Riley', 'ABCDEF', 'playerId', 'spond_member_id']) {
+      expect(json).not.toContain(leaked)
+    }
+  })
+
+  it('is no longer named in either deny list, which now name the identity keys instead', () => {
+    // SOURCE TEXT. The deny list entry was the tripwire while the diagram was
+    // unpublished; now that it is allow listed the tripwire is the set of keys
+    // no element may ever carry, on both sides.
+    const client = read('lib/publicShare.ts')
+    const clientForbidden = client.slice(client.indexOf('const FORBIDDEN = new Set'), client.indexOf('function hasNoForbidden'))
     const server = readFileSync(join(SRC, '..', 'supabase/functions/_shared/share.ts'), 'utf8')
-    const forbidden = server.slice(server.indexOf('const FORBIDDEN_ANYWHERE'), server.indexOf('function assertKeysWithin'))
-    expect(forbidden).toContain("'diagram'")
+    const serverForbidden = server.slice(server.indexOf('const FORBIDDEN_ANYWHERE'), server.indexOf('function assertKeysWithin'))
+    for (const block of [clientForbidden, serverForbidden]) {
+      expect(block).not.toContain("'diagram'")
+      for (const key of ['display_name', 'shirt_number', 'guardian']) expect(block).toContain(`'${key}'`)
+    }
+  })
+
+  it('is read by the Edge builder alone: the client drill read stays narrow', () => {
+    // SOURCE TEXT. The one reviewed widening is manage-content-share's own
+    // DRILL_COLS. The client's DRILL_COLS is pinned narrow above and the
+    // library, the planner and every list read still cannot see a diagram.
+    const edge = readFileSync(join(SRC, '..', 'supabase/functions/manage-content-share/index.ts'), 'utf8')
+    const cols = /const DRILL_COLS =\s*\n?\s*'([^']*)'/.exec(edge)
+    expect(cols).toBeTruthy()
+    expect(cols![1].split(',').map((c) => c.trim())).toContain('diagram')
   })
 })
 

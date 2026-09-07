@@ -332,3 +332,32 @@ describe('PublicShareResultView', () => {
     expect(html).toContain('id="public-share-url"')
   })
 })
+
+// =====================================================================
+// The preview shows the diagram that becomes public (DRILL-02b)
+// =====================================================================
+describe('PublicSharePreviewBody with a drawn drill', () => {
+  const drawn: PublicDrillSnapshot = {
+    ...drillSnapshot(),
+    diagram: {
+      surface: { kind: 'blank', orientation: 'portrait' },
+      elements: [
+        { type: 'player', x: 0.3, y: 0.3, colour: 'blue', label: '9' },
+        { type: 'cone', x: 0.5, y: 0.5, colour: 'orange' },
+      ],
+    },
+  }
+
+  it('renders the diagram through the canonical renderer, so the coach previews exactly what is published', () => {
+    const html = renderToStaticMarkup(<PublicSharePreviewBody kind="drill" snapshot={drawn} />)
+    expect(html).toContain('Diagram')
+    expect(html).toContain('dd-surface')
+    expect(html).toContain('data-el="player"')
+    expect(html).toContain('data-el="cone"')
+  })
+
+  it('renders no diagram block for a snapshot that carries none', () => {
+    const html = renderToStaticMarkup(<PublicSharePreviewBody kind="drill" snapshot={drillSnapshot()} />)
+    expect(html).not.toContain('dd-surface')
+  })
+})

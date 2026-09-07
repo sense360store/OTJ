@@ -1980,12 +1980,18 @@ a.activity-batch:hover { text-decoration: underline; }
   /* Diagrams, boards and images must stay legible and must not overflow the
      sheet. Colour is preserved so a four corners tag or a board side still
      reads correctly on a colour printer or in a saved PDF. */
-  .public-media, .public-media-image, .board-pitch, img, svg {
+  .public-media, .public-media-image, .board-pitch, .dd-surface, img, svg {
     max-width: 100%;
     height: auto;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+  /* A drawn diagram keeps its aspect ratio from its own geometry, so a width
+     cap alone bounds it (a height cap alone is what letterboxes it; see
+     src/lib/drillDiagramSize.ts). Uncapped, a portrait pitch at the full
+     sheet width is most of an A4 page and pushes the whole drill card onto a
+     page of its own. */
+  .public-diagram .dd-surface { max-width: 110mm; }
   .public-pill, .public-meta, .tag, .board-disc {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
