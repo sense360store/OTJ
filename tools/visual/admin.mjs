@@ -133,6 +133,17 @@ const READ_POSITIONS = [
   { id: 'argonauts', sortOrder: 4 },
 ]
 const UNSET_POSITIONS = READ_POSITIONS.map((r) => ({ id: r.id, sortOrder: null }))
+/* The screen's own statement that a save LANDED, for a drive that has to act
+   after one. It is the thing to wait for because it renders only once the
+   read holds exactly the order this admin saved. The "Saved club order. Move
+   a team" hint is NOT: the screen shows it for the whole round trip between
+   Save being pressed and the refetch landing (`dirty={unsaved}`, and
+   `unsaved` is suppressed while a read is awaited), so a drive waiting on it
+   resolved with the write still in flight, landed the other admin's order
+   FIRST, and then watched this screen's own save apply over it, which read
+   as the success note surviving another admin's order on about one run in
+   two. */
+const savedNote = (page) => page.locator('.note-success[role="status"]').filter({ hasText: 'Team order saved' })
 /* The LAST write of a name, with its arguments, compared whole: the order
    entries claim what was sent, which a counter cannot say. */
 const lastWriteWas = (page, name, vars) =>
@@ -1734,11 +1745,7 @@ export const TEAM_FLOWS = [
     drive: async (page) =>
       (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
       (await click(saveOrderButton(page))) &&
-      (await page
-        .locator('.admin-hint')
-        .filter({ hasText: 'Saved club order. Move a team' })
-        .waitFor()
-        .then(() => true)) &&
+      (await savedNote(page).waitFor().then(() => true)) &&
       (await page
         .evaluate(() => window.__adminStore.saveTeamOrder(['spartans', 'argonauts', 'gladiators', 'titans', 'trojans']))
         .then(() => true)),
@@ -1755,11 +1762,7 @@ export const TEAM_FLOWS = [
       (await saveOrderButton(page).isDisabled()),
     drive: async (page) =>
       (await click(saveOrderButton(page))) &&
-      (await page
-        .locator('.admin-hint')
-        .filter({ hasText: 'Saved club order. Move a team' })
-        .waitFor()
-        .then(() => true)) &&
+      (await savedNote(page).waitFor().then(() => true)) &&
       (await page
         .evaluate(() => window.__adminStore.saveTeamOrder(['spartans', 'argonauts', 'gladiators', 'titans', 'trojans']))
         .then(() => true)),
