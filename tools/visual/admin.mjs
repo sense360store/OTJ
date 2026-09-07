@@ -1645,16 +1645,30 @@ export const TEAM_FLOWS = [
     key: 'teams-order-failed',
     screen: 'adminteams',
     state: 'writefails',
-    note: 'the order write refused: the alert says so and holds focus, the list keeps the arrangement as unsaved after the refetch lands, no success is claimed, no refresh warning is raised, and Save is offered again rather than the refusal being swallowed',
+    /* A failed save leaves NO draft (`onError: () => setDraft(null)` on the
+       screen, argued beside `draftAfterSaved` in teamOrder.ts): the list goes
+       back to what is STORED once the refetch lands, which is what every
+       refusal sentence promises ("the list has been refreshed"). An earlier
+       version of this entry expected the arrangement kept as unsaved with
+       Save offered again, which was the second of the two answers that file
+       records as wrong; the harness modelled it for a day after the product
+       moved on. Stored here is 2, 1, 3, 5, 4 in array order, so the list
+       reads Trojans first and Titans back where it was before the move. */
+    note: 'the order write refused: the alert says so and holds focus, the refused write carried the arrangement and the positions the screen read, the draft is dropped so the list shows the stored order again once the refetch lands, no success is claimed, no refresh warning is raised, and Save is withheld because nothing is left to save',
     proof: async (page) =>
       (await page.locator('.note-danger[role="alert"]').filter({ hasText: 'Could not save the team order' }).count()) === 1 &&
       (await page.evaluate(() => !!document.activeElement?.querySelector('.note-danger[role="alert"]'))) &&
-      (await orderOf(page)).join(',') === 'Titans,Trojans,Gladiators,Argonauts,Spartans' &&
-      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 1 &&
+      (await calls('saveTeamOrder', 1)(page)) &&
+      (await lastWriteWas(page, 'saveTeamOrder', {
+        orderedIds: ['titans', 'trojans', 'gladiators', 'argonauts', 'spartans'],
+        expected: READ_POSITIONS,
+      })) &&
+      (await orderOf(page)).join(',') === 'Trojans,Titans,Gladiators,Argonauts,Spartans' &&
+      (await positionsOf(page)).join(',') === '1,2,3,4,5' &&
+      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 0 &&
       (await page.locator('.note-warning[role="status"]').count()) === 0 &&
-      !(await saveOrderButton(page).isDisabled()) &&
-      (await page.locator('.note-success').count()) === 0 &&
-      (await calls('saveTeamOrder', 1)(page)),
+      (await saveOrderButton(page).isDisabled()) &&
+      (await page.locator('.note-success').count()) === 0,
     drive: async (page) =>
       (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
       (await click(saveOrderButton(page))),

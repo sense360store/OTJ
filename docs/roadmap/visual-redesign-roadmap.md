@@ -1,6 +1,6 @@
 # OTJ visual redesign roadmap
 
-Status: approved direction. VISUAL-00 and VISUAL-01 delivered; VISUAL-02 is in progress, adopted route by route in seven merged pull requests with Home under review, and Sessions and the remaining admin screens still to come.
+Status: approved direction. VISUAL-00 and VISUAL-01 delivered; VISUAL-02 is in progress, adopted route by route in eight merged pull requests, Home most recently in #228, and Sessions and the remaining admin screens still to come.
 
 Created: 27 August 2026. VISUAL-00 completed 27 August 2026. VISUAL-01 completed 27 August 2026 (merged at 23:16 UTC, which was already 28 August in Yorkshire). Last reviewed 6 September 2026.
 
@@ -122,10 +122,10 @@ Players is deliberately in this wave only after #191, so bulk selection, depende
 
 **Acceptance.** Every surface covers normal, loading, empty, error, read-only/permission-limited and narrow-phone states where those states are reachable. Destructive flows remain unmistakably destructive and preserve their existing confirmation semantics.
 
-**Status, 6 September 2026: in progress.** Adopted, each in its own reviewed
+**Status, 7 September 2026: in progress.** Adopted, each in its own reviewed
 PR: Registered Players (#212, #213), Activity (#214), Account (#215), Login and
-Set Password (#216), Feedback (#217), and Admin Users and Admin Teams (#218).
-Home is adopted in a PR under review (see Home below). Not yet adopted from
+Set Password (#216), Feedback (#217), Admin Users and Admin Teams (#218), and
+Home (#228, merged 7 September 2026; see Home below). Not yet adopted from
 the initial surface group: Sessions, which is also a VISUAL-01 acceptance
 surface and so has been checked but not adopted in full, and the admin
 screens beyond Users and Teams. The wave is Done when the whole initial
@@ -772,7 +772,7 @@ cross product change rather than this slice's.
   own, that is the same level jump one branch down. It is a shared primitive
   with thirty callers, so the level is not this slice's to move.
 
-#### Home: adopted, under review
+#### Home: complete
 
 The two screens behind `/` now use the shared system: the coach home and
 the parent dashboard, which `HomeSwitch` dispatches between on
