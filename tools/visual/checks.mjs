@@ -4507,6 +4507,239 @@ const focusReturned = async (page, d) => {
   }
 }
 
+/* ---- COACH-11: create a drill from either planning surface (VISUAL-03) ----
+   The affordances, the plan mode form and the Drill Maker round trip, driven
+   in a browser rather than read. The capability matrix and the row rules are
+   pinned in src/routes/planDrillAuthoring.screens.test.tsx and the pure
+   suites; what only a browser can settle is measured here: hit areas at 360,
+   the bar wrapping rather than clipping, focus moving into the dialog and
+   back to its opener, Escape, the disclosure from the keyboard, and the
+   draft surviving the trip to the Drill Maker and back. */
+{
+  const TITLE = 'Overlap and finish'
+  const hitAreas = (page) =>
+    page.evaluate(() => {
+      const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+      const hit = (el) => {
+        const b = el.getBoundingClientRect()
+        const a = getComputedStyle(el, '::after')
+        const h = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+        const w = a.content === 'none' ? b.width : Math.max(b.width, px(a.width))
+        return { h: Math.round(h), w: Math.round(w) }
+      }
+      const short = []
+      for (const [label, sel] of [
+        ['add action', '.add-bar .add-slot'],
+        ['turn into a drill', '.act-turn'],
+      ]) {
+        const els = [...document.querySelectorAll(sel)]
+        if (els.length === 0) short.push(`${label}: none on the page`)
+        for (const el of els) {
+          const { h, w } = hit(el)
+          if (h < 44 || w < 44) short.push(`${label} ${h}x${w}`)
+        }
+      }
+      return short
+    })
+
+  /* ---- the add bar at 360: three actions, wrapped, each a real control ---- */
+  for (const screen of ['planner', 'weekplan']) {
+    const page = await open(screen, 360, { caps: 'author', at: 'existing' })
+    if (!page.blank) {
+      const r = await page.evaluate(() => {
+        const slots = [...document.querySelectorAll('.add-bar .add-slot')]
+        const tops = new Set(slots.map((e) => Math.round(e.getBoundingClientRect().top)))
+        return {
+          labels: slots.map((e) => e.textContent.trim()),
+          rows: tops.size,
+          clipped: slots.some((e) => e.scrollWidth > e.clientWidth + 1),
+          over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          turns: document.querySelectorAll('.act-turn').length,
+        }
+      })
+      check(`${screen} at 360: the add bar offers New drill as a third action and wraps rather than clips`,
+        r.labels.join('|') === 'Add from library|Add custom|New drill' && r.rows >= 2 && !r.clipped && r.over <= 0, JSON.stringify(r))
+      check(`${screen} at 360: Turn into a drill sits on the custom row and on no other`, r.turns === 1, `${r.turns} on the page`)
+      const short = await hitAreas(page)
+      check(`${screen} at 360: every authoring control reaches a 44px hit area`, short.length === 0, short.join(', '))
+    }
+    await page.close()
+  }
+
+  /* ---- without drills.create the bar is COACH-10's ---- */
+  {
+    const page = await open('planner', 390, { caps: 'coach', at: 'existing' })
+    const r = page.blank
+      ? null
+      : await page.evaluate(() => ({
+          labels: [...document.querySelectorAll('.add-bar .add-slot')].map((e) => e.textContent.trim()),
+          turns: document.querySelectorAll('.act-turn').length,
+        }))
+    check('a coach without drills.create gets the two action bar and no Turn into a drill',
+      !!r && r.labels.join('|') === 'Add from library|Add custom' && r.turns === 0, JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- keyboard: the dialog opens from the keyboard, takes focus, and gives it back ---- */
+  {
+    const page = await open('planner', 1280, { caps: 'author' })
+    if (await focused(page.getByRole('button', { name: 'New drill', exact: true }), 'New drill takes focus')) {
+      await page.keyboard.press('Enter')
+      await page.waitForTimeout(200)
+      const r = await page.evaluate(() => {
+        const m = document.querySelector('.modal')
+        const a = document.activeElement
+        return {
+          open: !!m && !!m.textContent && m.textContent.includes('New drill'),
+          focusInside: !!m && !!a && m.contains(a),
+          onTitle: !!a && a.tagName === 'INPUT' && a.getAttribute('placeholder') === 'Drill name',
+        }
+      })
+      check('Enter on New drill opens the plan mode form with focus on its Title', r.open && r.focusInside && r.onTitle, JSON.stringify(r))
+      // Tab walks the dialog and nothing behind it.
+      let escaped = false
+      for (let i = 0; i < 40 && !escaped; i++) {
+        await page.keyboard.press('Tab')
+        escaped = await page.evaluate(() => {
+          const m = document.querySelector('.modal')
+          return m ? !m.contains(document.activeElement) : true
+        })
+      }
+      check('Tab stays inside the plan mode form', !escaped)
+      // The disclosure is a control: focus it, Enter opens it.
+      if (await focused(page.locator('.form-more > summary'), 'More details takes focus')) {
+        await page.keyboard.press('Enter')
+        await page.waitForTimeout(100)
+        const opened = await page.evaluate(() => !!document.querySelector('.form-more[open]'))
+        check('Enter on More details opens the disclosure', opened)
+      }
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(200)
+      const back = await page.evaluate(() => ({
+        closed: !document.querySelector('.modal'),
+        opener: document.activeElement?.textContent?.trim() ?? 'nothing',
+      }))
+      check('Escape closes the form and returns focus to New drill', back.closed && back.opener === 'New drill', JSON.stringify(back))
+    }
+    await page.close()
+  }
+
+  /* ---- Add to plan is inert without a title, and a typed drill lands as a row ---- */
+  {
+    const page = await open('planner', 1280, { caps: 'author' })
+    if (await pressed(page.getByRole('button', { name: 'New drill', exact: true }), 'New drill is pressed')) {
+      await page.waitForTimeout(150)
+      const before = await page.evaluate(() => ({
+        add: document.querySelector('.modal .btn-primary')?.hasAttribute('disabled') ?? null,
+        draw: [...document.querySelectorAll('.modal .btn-ghost')].find((b) => b.textContent.includes('Save and draw it'))?.hasAttribute('disabled') ?? null,
+      }))
+      check('with no title both plan actions are disabled', before.add === true && before.draw === true, JSON.stringify(before))
+      if (await acted(page.getByLabel('Title'), 'the Title is typed', 'filled', (el) => el.fill(TITLE))) {
+        const after = await page.evaluate(() => document.querySelector('.modal .btn-primary')?.hasAttribute('disabled') ?? null)
+        check('a title enables Add to plan', after === false, String(after))
+        if (await pressed(page.getByRole('button', { name: 'Add to plan', exact: true }), 'Add to plan is pressed')) {
+          await page.waitForTimeout(400)
+          const r = await page.evaluate((t) => ({
+            closed: !document.querySelector('.modal'),
+            row: [...document.querySelectorAll('.ac-title')].some((e) => e.textContent === t),
+            rows: document.querySelectorAll('.act-card').length,
+          }), TITLE)
+          check('Add to plan closes the form and the drill is a row of the plan', r.closed && r.row && r.rows === 1, JSON.stringify(r))
+          // Focus went back to the opener, which is where the coach was.
+          const opener = await page.evaluate(() => document.activeElement?.textContent?.trim() ?? 'nothing')
+          check('after Add to plan focus returns to New drill', opener === 'New drill', opener)
+        }
+      }
+    }
+    await page.close()
+  }
+
+  /* ---- the round trip: Save and draw it, then Back, with the draft intact ---- */
+  for (const screen of ['planner', 'weekplan']) {
+    const page = await open(screen, 390, { caps: 'author' })
+    if (await pressed(page.getByRole('button', { name: 'New drill', exact: true }), `${screen}: New drill is pressed`)) {
+      await page.waitForTimeout(150)
+      if (await acted(page.getByLabel('Title'), `${screen}: the Title is typed`, 'filled', (el) => el.fill(TITLE))) {
+        if (await pressed(page.getByRole('button', { name: 'Save and draw it', exact: true }), `${screen}: Save and draw it is pressed`)) {
+          const opened = await page.waitForSelector('.dde', { state: 'visible', timeout: 3000 }).then(() => true, () => false)
+          const there = opened
+            ? await page.evaluate(() => ({
+                path: document.querySelector('.content')?.getAttribute('data-path') ?? 'gone',
+                back: document.querySelector('.dde button[aria-label="Back to the plan"]') !== null,
+                stash: !!sessionStorage.getItem('otj_authoring_draft'),
+              }))
+            : null
+          check(`${screen}: Save and draw it opens the Drill Maker on the new drill with Back naming the plan`,
+            !!there && /^\/drill\/d-new-\d+\/diagram$/.test(there.path) && there.back && there.stash, JSON.stringify(there))
+          if (await pressed(page.getByRole('button', { name: 'Back to the plan', exact: true }), `${screen}: Back to the plan is pressed`)) {
+            await page.waitForTimeout(400)
+            const r = await page.evaluate((t) => ({
+              editor: !!document.querySelector('.dde'),
+              path: document.querySelector('.content')?.getAttribute('data-path') ?? 'gone',
+              row: [...document.querySelectorAll('.ac-title, .ac-body h4')].some((e) => e.textContent === t),
+              stash: !!sessionStorage.getItem('otj_authoring_draft'),
+              token: location.search.includes('draft='),
+            }), TITLE)
+            check(`${screen}: Back lands on the plan with the created drill still in it, the stash taken and no token left`,
+              !r.editor && r.row && !r.stash && !r.token && (screen === 'planner' ? r.path === '/planner' : true), JSON.stringify(r))
+          }
+        }
+      }
+    }
+    await page.close()
+  }
+
+  /* ---- Turn into a drill replaces the custom row in place ---- */
+  {
+    const page = await open('planner', 1280, { caps: 'author', at: 'existing' })
+    const before = page.blank ? [] : await page.evaluate(() => [...document.querySelectorAll('.act-card')].map((c) => c.querySelector('.ac-title, h4')?.textContent ?? ''))
+    if (await pressed(page.getByRole('button', { name: 'Turn into a drill', exact: true }), 'Turn into a drill is pressed')) {
+      await page.waitForTimeout(150)
+      const words = await page.evaluate(() => document.querySelector('.modal')?.textContent ?? '')
+      check('the form says it takes the custom row\'s place', words.includes('Takes the place of the custom activity'), words.slice(0, 80))
+      if (await acted(page.getByLabel('Title'), 'the Title is typed', 'filled', (el) => el.fill(TITLE))) {
+        if (await pressed(page.getByRole('button', { name: 'Add to plan', exact: true }), 'Add to plan is pressed')) {
+          await page.waitForTimeout(400)
+          const after = await page.evaluate(() => ({
+            titles: [...document.querySelectorAll('.act-card')].map((c) => c.querySelector('.ac-title, h4')?.textContent ?? ''),
+            station: [...document.querySelectorAll('.role-badge')].some((b) => b.textContent.startsWith('Station')),
+            turns: document.querySelectorAll('.act-turn').length,
+          }))
+          check('the created drill takes the custom row\'s position, keeps its station, and the offer is gone',
+            before.length === 2 && after.titles.length === 2 && after.titles[0] === before[0] && after.titles[1] === TITLE && after.station && after.turns === 0,
+            JSON.stringify({ before, after }))
+        }
+      }
+    }
+    await page.close()
+  }
+
+  /* ---- the form's own vocabulary: no inline size, fields on the primitives ---- */
+  {
+    const page = await open('planner', 1280, { caps: 'author' })
+    if (await pressed(page.getByRole('button', { name: 'New drill', exact: true }), 'New drill is pressed')) {
+      await page.waitForTimeout(150)
+      const r = await page.evaluate(() => {
+        const m = document.querySelector('.modal')
+        if (!m) return null
+        const lead = [...m.querySelectorAll('.field')].filter((f) => !f.closest('details'))
+        return {
+          leadLabels: lead.map((f) => f.querySelector('label')?.textContent ?? ''),
+          bound: lead.every((f) => {
+            const l = f.querySelector('label')
+            return !!l && !!l.getAttribute('for') && !!document.getElementById(l.getAttribute('for'))
+          }),
+          inline: lead.filter((f) => f.querySelector('[style*="font-size"]')).length,
+          summaryHeight: Math.round(m.querySelector('.form-more > summary')?.getBoundingClientRect().height ?? 0),
+        }
+      })
+      check('the plan mode form leads with four bound fields on the primitives, and its disclosure is a 44px control',
+        !!r && r.leadLabels.join('|') === 'Title|What it works on|Phase|Minutes' && r.bound && r.inline === 0 && r.summaryHeight >= 44, JSON.stringify(r))
+    }
+    await page.close()
+  }
+}
+
 /* ---- reduced motion ---- */
 {
   const page = await open('dialog', 1280, { reducedMotion: true })

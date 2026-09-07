@@ -58,7 +58,7 @@ next**, as the first gated coaching migration.
 | COACH-8 | Coaching workflow | The game plan and a separate game bib | Later | P2 | Migration M3, gated. Depends on COACH-3, wants COACH-1 and COACH-5. |
 | COACH-9 | Coaching workflow | Keep the protected session share reachable, and pin its payload | Later | P2 | No schema. Mostly a test. |
 | COACH-10 | Coaching workflow | One shared activity authoring seam | **Done** | P1 | Pure refactor, no user-visible change, no migration. Shipped in #207. Gates COACH-11 and COACH-12. |
-| COACH-11 | Coaching workflow | Create and draw a drill from either planning surface | Later | P1 | No schema. Depends on COACH-10. |
+| COACH-11 | Coaching workflow | Create and draw a drill from either planning surface | **Done** | P1 | No schema. Built on the COACH-10 seam, both hosts through one hook, the draft kept across the Drill Maker round trip. |
 | COACH-12 | Coaching workflow | Adapt a drill for one session, unlisted, with Save as reusable | Later | P2 | Migration M4, gated. Depends on COACH-10. |
 | COACH-13 | Coaching workflow | Week plan naming, promotion and two deliveries of one plan | Later | P2 | No schema. |
 | COACH-P1 | Coaching workflow | Drill Maker authoring improvements | Parked | P2 | No schema. Pick up on capacity. |
@@ -235,7 +235,8 @@ their own dependencies.
    applied on 4 September 2026, and COACH-1B in its own PR calling it.
 7. **COACH-5** (M2), the venue layouts table, then **COACH-6** and **COACH-7**.
 8. **COACH-8** (M3), the game plan. **COACH-9** any time.
-9. **COACH-11**, **COACH-12** (M4) and **COACH-13** on the authoring track.
+9. ~~**COACH-11**~~ (Done), then **COACH-12** (M4) and **COACH-13** on the
+   authoring track.
 10. COACH-P1 and COACH-P2 on capacity and on evidence respectively.
 
 **#191 and #196 proceeded on their own merits and were not sequenced by this

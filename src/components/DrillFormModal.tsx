@@ -410,6 +410,13 @@ export function DrillFormModal({
             : 'Add a drill to the club library.'
       }
       onClose={onClose}
+      // Plan mode freezes every dismissal route while the insert is in
+      // flight. A form dismissed mid write would still create the drill
+      // (the write is already out) but the settled callback would find no
+      // form to hand it to, and the plan would never receive it: a library
+      // drill nobody asked for and a plan without it. The Library form's
+      // own dismissal is unchanged.
+      dismissible={plan ? !pending : true}
       wide
       footer={
         plan ? (

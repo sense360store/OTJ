@@ -27,6 +27,7 @@ documents remains design.
 | **COACH-3**, the suggested setup | **Built** in #203 (the pure generator, 21 August 2026) and #204 (the Players and groups screen, 22 August 2026). No migration. |
 | **COACH-4**, preserving the coach's setup when attendance changes | **Built** in #206 (22 August 2026). No migration. |
 | **COACH-10**, one authoring seam | **Built** in #207 (22 August 2026). No migration. |
+| **COACH-11**, create and draw a drill from either surface | **Built** (7 September 2026, this pull request). New drill in the shared add bar and Turn into a drill on a custom row, on both hosts through one hook (`src/components/PlanDrillAuthoring.tsx`); the drill form's plan mode over the same insert the Library uses; Save and draw it opens the Drill Maker with the draft stashed one shot in the tab and restored on the way back (`src/lib/authoringReturn.ts`, `src/lib/planDrillAuthoring.ts`). No migration, no new capability, no adaptation semantics. |
 | **COACH-1**, the club's team order | **Built.** It took two gated migrations. COACH-1A, `0051_team_sort_order` (M1: `teams.sort_order`, the partial unique index and the audit allow list entry), merged as #223 and applied on 2 September 2026 (hosted `20260902150212` / `team_sort_order`). Then `0052_atomic_team_order`, merged as #226 and applied on 4 September 2026 (hosted `20260904174142` / `atomic_team_order`), which adds the transactional writer `set_team_order`: a whole order written from the browser is several statements, and two admins moving DISJOINT rows could leave a valid order neither submitted. COACH-1B, the frontend half, is the Teams admin screen: it lists the club's teams in club order, moves them with Move up and Move down, says whether the order is not set, incomplete or saved, and saves the whole arrangement through ONE `set_team_order` call. `src/lib/teamOrder.ts` holds the pure rules and the screen is the one consumer. Every label stays alphabetical, and the grouping suggestion is still handed no order: wiring the two together is a later, separate decision. |
 | Everything else | Not built. |
 
@@ -218,6 +219,8 @@ on 23 August, so the hosted head is now `20260823065041` / `bulk_delete_players`
 3. ~~**COACH-4**, preserving the coach's setup when attendance changes.~~
    Built: #206.
 4. ~~**COACH-10**, the authoring seam.~~ Built: #207.
+5. ~~**COACH-11**, create and draw a drill from either surface.~~ Built, on
+   the seam COACH-10 delivered, with no migration.
 
 **COACH-1** (`teams.sort_order`) is built and took two gated migrations rather
 than the one the plan carried: `0051_team_sort_order`, merged as #223 and

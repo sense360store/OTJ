@@ -24,7 +24,7 @@ import type {
 
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
 
-export type CapSet = 'coach' | 'parent' | 'viewer' | 'admin' | 'auditor' | 'planner' | 'clubadmin'
+export type CapSet = 'coach' | 'parent' | 'viewer' | 'admin' | 'auditor' | 'planner' | 'clubadmin' | 'author'
 
 const CAPS: Record<CapSet, string[]> = {
   // A coach with the full club-wide set. players.delete, players.export and
@@ -39,6 +39,22 @@ const CAPS: Record<CapSet, string[]> = {
     'players.delete',
     'players.export',
     'players.import',
+    'club.manage',
+    'teams.manage',
+    'audit.view',
+    'shares.manage',
+  ],
+  // COACH-11: a coach who may also CREATE drills. `coach` deliberately holds
+  // no drills.create, so the planner and the week plan editor render the
+  // COACH-10 add bar under it and the third action, New drill, and Turn into
+  // a drill appear only under this set. A separate set rather than a widening
+  // of `coach`, for the reason every other set here is: widening moves every
+  // shot that already reads it.
+  author: [
+    'sessions.create',
+    'drills.create',
+    'players.view',
+    'players.manage',
     'club.manage',
     'teams.manage',
     'audit.view',
@@ -418,6 +434,42 @@ export const SESSIONS: Session[] = [
   session({ id: 's-3', name: 'Gladiators Saturday practice', coachId: 'coach-me', date: inDays(5), teamIds: ['gladiators'] }),
   session({ id: 's-4', name: 'Spartans warm up session', coachId: 'coach-them', date: inDays(6), teamIds: ['spartans'] }),
 ]
+
+/* ---- COACH-11: the planner and the week plan editor ---------------------
+   One saved session of the harness coach's own, with a drill row and a
+   custom row, so Turn into a drill has a row to offer itself on and the
+   drill row proves it is NOT offered there; and one week plan with the same
+   shape. Both answer only while their screen is mounted (see the stub), so
+   Sessions and Home keep reading exactly what they read. */
+export const PLANNER_SESSION_ID = 's-planner'
+export const PLANNER_SESSION: Session = session({
+  id: PLANNER_SESSION_ID,
+  name: 'Titans Tuesday',
+  coachId: 'coach-me',
+  date: inDays(1),
+  activities: [
+    { phase: 'Warm-Up', drillId: 'd1', duration: 10 },
+    { phase: 'Skill', title: 'Custom activity', duration: 15, slot: 'station' },
+  ],
+})
+export const WEEK_PLAN_TEMPLATE: Template = {
+  id: 't-week',
+  name: 'Week 3, receiving',
+  author: 'Club',
+  focus: 'Receiving',
+  activities: [
+    { phase: 'Warm-Up', drillId: 'd1', duration: 10 },
+    { phase: 'Skill', title: 'Custom activity', duration: 15 },
+  ],
+  intentions: ['Receive on the back foot'],
+  programme: '',
+  week: 3,
+  createdAt: '2026-08-02T00:00:00Z',
+  createdBy: 'coach-me',
+  sourceUrl: '',
+  sourceLabel: '',
+  rights: 'club',
+} as unknown as Template
 
 export const DRILLS: Drill[] = [
   {

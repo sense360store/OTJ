@@ -120,7 +120,10 @@ export function PlanFromSpondView({
       <p className="muted" style={{ fontSize: 13.5, marginTop: 0, marginBottom: 12 }}>
         Turn a synced Spond event into a session. The counts show who has answered so far.
       </p>
-      <div className="row" style={{ gap: 7, marginBottom: 12 }}>
+      {/* Four chips do not fit one 360px row; found by measuring the planner
+          at that width (COACH-11), where this row was the last thing pushing
+          the page sideways. */}
+      <div className="row wrap" style={{ gap: 7, marginBottom: 12 }}>
         <Chip on={kind === 'training'} onClick={() => onKind('training')}>
           {TRAINING_LABEL}
         </Chip>

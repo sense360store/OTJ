@@ -744,6 +744,18 @@ summary:focus-visible,
 .act-edit > .row,
 .act-edit > .icon-btn,
 .act-edit > .act-x { flex: 0 0 auto; }
+/* COACH-11, found by measuring at 360: the planner's grid column took its
+   content's minimum width, so a session with one drill row was 574px wide
+   on a 360px phone and the whole page scrolled sideways, add bar included.
+   The column shrinks like any block now, and under the phone breakpoint the
+   dated row wraps the way the week plan row already did: the title on the
+   first line, the phase, minutes and remove on the second. */
+.planner > * { min-width: 0; }
+@media (max-width: 900px) {
+  .act-card { flex-wrap: wrap; row-gap: var(--space-8); }
+  .act-card > .ac-toggle, .act-card > .ac-body { flex: 1 1 180px; min-width: 150px; }
+  .act-card > .act-phase, .act-card > .act-dur-field, .act-card > .act-x { flex: 0 0 auto; }
+}
 
 /* Expandable drill card: the body is a button that toggles a detail panel
    beneath, so coaches can inspect a drill without leaving the planner. */

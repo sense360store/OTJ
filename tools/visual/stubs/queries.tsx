@@ -37,6 +37,8 @@ import {
   AVATAR_PATH,
   TEAMS,
   TEMPLATES,
+  PLANNER_SESSION,
+  PLANNER_SESSION_ID,
   profileEdits,
   activityHasNext,
   activityPages,
@@ -44,7 +46,7 @@ import {
   fixtures,
 } from '../fixtures'
 import type { ActivityFilters } from '../../../src/lib/activityView'
-import type { Capability, Member, RoleCapability, RoleInfo, Team } from '../../../src/lib/data'
+import type { Capability, Drill, Member, RoleCapability, RoleInfo, Team } from '../../../src/lib/data'
 
 const query = <T,>(data: T, over: Record<string, unknown> = {}) => ({
   data,
@@ -118,7 +120,7 @@ export const useSetLiveActivity = mutation
 export const useLiveSessionSync = () => {}
 const drillRows = () => (ON_HOME ? (fixtures.state === 'nocontent' ? [] : HOME_DRILLS) : DRILLS)
 export const useDrills = () => query(drillRows())
-export const useDrillMap = () => byId(drillRows())
+export const useDrillMap = () => byId(ON_PLANNER ? allDrills() : drillRows())
 export const useMedia = () => query(MEDIA)
 export const useMediaMap = () => byId(MEDIA)
 export const useTemplates = () =>
@@ -696,8 +698,51 @@ export const useUpdateMyProfile = () =>
     if (vars.teamId !== undefined) profileEdits.write({ teamId: vars.teamId })
   })
 
-export const useInsertDrill = mutation
 export const useUpdateDrill = mutation
+
+/* ---- COACH-11: the planner, the week plan editor and the Drill Maker ----
+   The planner reads one session by id, and the harness's is answered only
+   on the planner screen so no other screen's reads move. A drill created
+   from a plan lands in a registry the drill reads then answer from, which
+   is what the product's cache invalidation does a beat later: the plan
+   re-renders with the created row's real title, and the Drill Maker opened
+   on it finds a drill the harness coach created. */
+const ON_PLANNER = harnessScreen === 'planner' || harnessScreen === 'weekplan'
+const createdDrills = new Map<string, Drill>()
+const allDrills = () => [...drillRows(), ...createdDrills.values()]
+export const useSession = (id?: string) =>
+  ON_PLANNER && id === PLANNER_SESSION_ID ? query(PLANNER_SESSION) : query(undefined)
+export const useActivityTitle = () => {
+  const map = byId(allDrills())
+  return (act: { drillId?: string; title?: string }, fallback = 'Custom activity') =>
+    act.drillId ? (map[act.drillId]?.title ?? 'Removed drill') : act.title || fallback
+}
+export const useInsertDrill = () =>
+  mutation({
+    mutate: (input: Record<string, unknown>, opts?: { onSuccess?: (d: Drill) => void }) => {
+      const created = {
+        ...(drillRows()[0] as Drill),
+        ...input,
+        id: `d-new-${createdDrills.size + 1}`,
+        createdBy: fixtures.me,
+        sourceUrl: '',
+        sourceLabel: '',
+        sourceKey: '',
+        rights: 'club',
+        createdAt: new Date().toISOString(),
+      } as unknown as Drill
+      createdDrills.set(created.id, created)
+      // A beat later, as a resolved write is: the form's pending label is
+      // real for one paint, and nothing is written during a render.
+      setTimeout(() => opts?.onSuccess?.(created), 60)
+    },
+  })
+export const useDrill = (id?: string) => query(id ? (allDrills().find((d) => d.id === id) ?? undefined) : undefined)
+export const useDrillDiagram = () => query(null)
+export const useUpdateDrillDiagram = mutation
+export const useInsertTemplate = mutation
+export const useUpdateTemplate = mutation
+export const useUpdateContentRights = mutation
 
 /* ---- Admin Users and Admin Teams (VISUAL-02) --------------------------
    Every read and write those two screens make. The reads answer from the
