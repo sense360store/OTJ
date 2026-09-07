@@ -753,7 +753,7 @@ summary:focus-visible,
 .planner > * { min-width: 0; }
 @media (max-width: 900px) {
   .act-card { flex-wrap: wrap; row-gap: var(--space-8); }
-  .act-card > .ac-toggle, .act-card > .ac-body { flex: 1 1 180px; min-width: 150px; }
+  .act-card > .ac-toggle, .act-card > .ac-body { flex: 1 1 200px; min-width: 150px; }
   .act-card > .act-phase, .act-card > .act-dur-field, .act-card > .act-x { flex: 0 0 auto; }
 }
 
