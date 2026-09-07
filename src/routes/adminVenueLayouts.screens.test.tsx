@@ -33,6 +33,7 @@ const FIVE: VenueLayout = {
   kind: 'stations',
   slots: 5,
   zones: { ...emptyLayoutZones({ kind: 'stations', slots: 5 }), size: { metresWide: 60, metresLong: 40 } },
+  storedZones: null,
 }
 const UNREADABLE: VenueLayout = { ...FIVE, id: 'l1', kind: 'games', slots: 1, zones: null }
 

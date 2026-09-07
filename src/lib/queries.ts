@@ -5690,22 +5690,36 @@ function toVenueLayout(r: VenueLayoutRow): VenueLayout {
     kind,
     slots: r.slots,
     zones: readable ? parseVenueLayoutZones(r.zones, r.slots) : null,
+    storedZones: r.zones,
   }
 }
 
 // Every layout the club holds. A dozen rows per venue per season, so one
 // read serves the admin screen and every session that resolves a layout.
+// Paged deterministically until a short page, because the Data API caps a
+// response at 1,000 rows and a club that keeps every season's layouts would
+// otherwise have its newest silently missing and reported as not drawn.
+const VENUE_LAYOUT_PAGE = 1000
+
 export function useVenueLayouts(enabled = true) {
   return useQuery({
     queryKey: ['venue_layouts'],
     enabled,
     queryFn: async (): Promise<VenueLayout[]> => {
-      const { data, error } = await supabase
-        .from('venue_layouts')
-        .select(VENUE_LAYOUT_COLS)
-        .order('created_at', { ascending: true })
-      if (error) throw error
-      return (data as unknown as VenueLayoutRow[]).map(toVenueLayout)
+      const rows: VenueLayoutRow[] = []
+      for (let from = 0; ; from += VENUE_LAYOUT_PAGE) {
+        const { data, error } = await supabase
+          .from('venue_layouts')
+          .select(VENUE_LAYOUT_COLS)
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, from + VENUE_LAYOUT_PAGE - 1)
+        if (error) throw error
+        const page = (data ?? []) as unknown as VenueLayoutRow[]
+        rows.push(...page)
+        if (page.length < VENUE_LAYOUT_PAGE) break
+      }
+      return rows.map(toVenueLayout)
     },
   })
 }
@@ -5722,11 +5736,25 @@ export interface SaveVenueLayoutInput {
   ageGroup: string
   shape: LayoutShape
   zones: VenueLayoutZones
+  // For a redraw: the stored value the draft opened on, exactly as the read
+  // carried it. The update is CONDITIONAL on the row still holding it, so
+  // two admins who opened one layout cannot silently overwrite each other:
+  // the second save finds no row and is refused as changed elsewhere.
+  expectedZones?: unknown
 }
 
 export function isVenueLayoutScopeTaken(error: unknown): boolean {
   const e = error as { code?: string; message?: string } | null
   return !!e && (e.code === '23505' || /venue_layouts_scope_unique/.test(e.message ?? ''))
+}
+
+// A redraw that found no row holding the value it opened on: somebody else
+// redrew or removed the layout first.
+export class VenueLayoutChangedError extends Error {
+  constructor() {
+    super('The layout was changed by somebody else since it was opened.')
+    this.name = 'VenueLayoutChangedError'
+  }
 }
 
 // Returns the authoritative readback, so the screen compares what the row
@@ -5738,8 +5766,14 @@ export function useSaveVenueLayout() {
     mutationFn: async (input) => {
       if (!profile?.club_id) throw new Error('You must be signed in to draw a layout.')
       const zones = serialiseVenueLayoutZones(input.zones, input.shape)
+      // jsonb equality is by value, so the row matches exactly when it still
+      // holds what the read returned, whatever key order the wire used.
       const query = input.id
-        ? supabase.from('venue_layouts').update({ zones }).eq('id', input.id)
+        ? supabase
+            .from('venue_layouts')
+            .update({ zones })
+            .eq('id', input.id)
+            .eq('zones', input.expectedZones as never)
         : supabase.from('venue_layouts').insert({
             club_id: profile.club_id,
             venue_id: input.venueId,
@@ -5752,10 +5786,12 @@ export function useSaveVenueLayout() {
       const { data, error } = await query.select(VENUE_LAYOUT_COLS)
       if (error) throw error
       const row = (data as unknown as VenueLayoutRow[])[0]
-      // Zero rows back from an update is a refusal the policies expressed as
-      // silence (the row is not this club's, or the caller lost club.manage);
-      // it is not a save.
-      if (!row) throw new Error('The layout was not saved. It may have been removed, or you may not hold club.manage.')
+      // Zero rows back from an update is not a save. For a redraw it is the
+      // conditional above finding no row: the layout was redrawn or removed
+      // by somebody else, or the caller lost club.manage; either way the
+      // draft does not land.
+      if (!row && input.id) throw new VenueLayoutChangedError()
+      if (!row) throw new Error('The layout was not saved. You may not hold club.manage.')
       return toVenueLayout(row)
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['venue_layouts'] }),

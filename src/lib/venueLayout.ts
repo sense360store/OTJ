@@ -126,6 +126,11 @@ export interface VenueLayout {
   kind: LayoutKind
   slots: number
   zones: VenueLayoutZones | null
+  // The stored value exactly as the wire carried it. Never read for drawing
+  // and never spread into a write: it is handed back as the CONDITION on a
+  // redraw, so a save lands only on the row the admin opened and a redraw
+  // made elsewhere in the meantime is refused rather than overwritten.
+  storedZones: unknown
 }
 
 export function layoutShapeOf(layout: Pick<VenueLayout, 'kind' | 'slots'>): LayoutShape {
@@ -408,7 +413,7 @@ export interface LayoutScope {
 // again and arrives at a different number.
 export type NoLayoutState =
   | 'no-venue'          // the session names no venue, so there is no ground to lay out
-  | 'no-age-group'      // sessions.age_group is empty, so the scope key cannot be assembled
+  | 'no-age-group'      // sessions.age_group is empty, or a label the club's list does not carry
   | 'season-unresolved' // the date falls in no season (or the session has no date)
   | 'season-ambiguous'  // the date falls in more than one season
   | 'not-drawn'         // the scope resolved and nobody has drawn this shape for it
@@ -421,13 +426,19 @@ export type ScopeResolution =
   | { state: 'season-unresolved' }
   | { state: 'season-ambiguous'; seasons: Season[] }
 
+// `clubAgeGroups` is the club's own vocabulary (clubs.age_groups): a label
+// the list does not carry, whether a legacy spelling or one an admin has
+// since removed, is the no-age-group state widened to "no matching age
+// group". A layout filed under a removed label stays stored and stops
+// resolving, rather than resurrecting a retired allocation.
 export function resolveLayoutScope(
   session: { venueId: string | null; ageGroup: string; date: string },
   seasons: readonly Season[],
+  clubAgeGroups: readonly string[],
 ): ScopeResolution {
   if (!session.venueId) return { state: 'no-venue' }
   const ageGroup = session.ageGroup.trim()
-  if (ageGroup === '') return { state: 'no-age-group' }
+  if (ageGroup === '' || !clubAgeGroups.includes(ageGroup)) return { state: 'no-age-group' }
   const season = resolveSeason(session.date, seasons)
   if (season.kind === 'none') return { state: 'season-unresolved' }
   if (season.kind === 'ambiguous') return { state: 'season-ambiguous', seasons: season.seasons }
@@ -446,11 +457,12 @@ export type LayoutLookup =
 export function findVenueLayout(
   session: { venueId: string | null; ageGroup: string; date: string },
   seasons: readonly Season[],
+  clubAgeGroups: readonly string[],
   layouts: readonly VenueLayout[],
   kind: LayoutKind,
   slots: number,
 ): LayoutLookup {
-  const scope = resolveLayoutScope(session, seasons)
+  const scope = resolveLayoutScope(session, seasons, clubAgeGroups)
   if (scope.state !== 'resolved') return scope
   if (!isLayoutShape(kind, slots)) return { state: 'slot-count', scope: scope.scope, season: scope.season }
   const layout = layouts.find(
@@ -464,6 +476,12 @@ export function findVenueLayout(
   )
   if (!layout) return { state: 'not-drawn', scope: scope.scope, season: scope.season }
   return { state: 'found', layout, scope: scope.scope, season: scope.season }
+}
+
+// The layouts filed under labels the club's list no longer carries, so the
+// Club screen can say what removing a label leaves unreachable.
+export function layoutsUnderRemovedLabels(layouts: readonly VenueLayout[], clubAgeGroups: readonly string[]): VenueLayout[] {
+  return layouts.filter((l) => !clubAgeGroups.includes(l.ageGroup))
 }
 
 // The layouts drawn for one scope, keyed by shape, for the admin screen.
@@ -484,7 +502,7 @@ export function describeNoLayout(state: NoLayoutState): string {
     case 'no-venue':
       return 'This session has no venue yet, so there is no ground to lay out. Choose a venue in the planner.'
     case 'no-age-group':
-      return 'This session has no age group yet, so its layout cannot be found. Set the age group in the planner.'
+      return 'This session has no age group on the club’s list, so its layout cannot be found. Set the age group in the planner, or an admin can add the label under Club.'
     case 'season-unresolved':
       return 'The session date falls in no season, so its layout cannot be found. An admin can check the seasons.'
     case 'season-ambiguous':

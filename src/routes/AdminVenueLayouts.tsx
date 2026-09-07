@@ -31,6 +31,7 @@ import { useFocusRestore } from '../hooks/useFocusRestore'
 import { ageGroupsConfigured } from '../lib/ageGroups'
 import type { Season } from '../lib/data'
 import {
+  VenueLayoutChangedError,
   isVenueLayoutScopeTaken,
   useClubAgeGroups,
   useDeleteVenueLayout,
@@ -86,6 +87,9 @@ type Draft = {
   // The stored signature when the draft opened, so a change made elsewhere
   // is noticed rather than overwritten.
   base: string | null
+  // The stored value as the read carried it, handed back as the condition
+  // on the redraw (src/lib/queries.ts). Never drawn from, never spread.
+  storedZones: unknown
   zones: VenueLayoutZones
 }
 
@@ -371,6 +375,7 @@ export function AdminVenueLayouts() {
       scope,
       layoutId: stored?.id ?? null,
       base: stored?.zones ? layoutSignature(stored.zones, shape) : null,
+      storedZones: stored?.storedZones ?? null,
       zones,
     })
   }
@@ -382,7 +387,7 @@ export function AdminVenueLayouts() {
     setEditorNote(null)
     wantNoteFocus()
     save.mutate(
-      { id: draft.layoutId ?? undefined, ...draftScope, shape, zones },
+      { id: draft.layoutId ?? undefined, expectedZones: draft.layoutId ? draft.storedZones : undefined, ...draftScope, shape, zones },
       {
         onSuccess: (stored) => {
           const storedSignature = stored.zones ? layoutSignature(stored.zones, shape) : null
@@ -391,7 +396,7 @@ export function AdminVenueLayouts() {
             // to it (and a new layout takes its id): the refetch that
             // follows must not read the admin's own save as somebody else's
             // change and drop the draft it just told them to save again.
-            setDraft((d) => (d ? { ...d, layoutId: stored.id, base: storedSignature } : d))
+            setDraft((d) => (d ? { ...d, layoutId: stored.id, base: storedSignature, storedZones: stored.storedZones } : d))
             setEditorNote({ tone: 'danger', text: LAYOUT_READBACK_MISMATCH })
             return
           }
@@ -402,6 +407,11 @@ export function AdminVenueLayouts() {
           if (isVenueLayoutScopeTaken(e)) {
             setDraft(null)
             setNote({ tone: 'warning', text: LAYOUT_SCOPE_TAKEN })
+            return
+          }
+          if (e instanceof VenueLayoutChangedError) {
+            setDraft(null)
+            setNote({ tone: 'warning', text: LAYOUT_CHANGED_ELSEWHERE })
             return
           }
           setEditorNote({ tone: 'danger', text: e.message })

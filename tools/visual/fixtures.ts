@@ -1829,5 +1829,6 @@ export const ADMIN_LAYOUTS: VenueLayout[] = [
         { n: 5, name: '', x: 0.53, y: 0.53, w: 0.45, h: 0.45 },
       ],
     },
+    storedZones: null,
   },
 ]

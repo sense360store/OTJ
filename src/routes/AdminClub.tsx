@@ -13,10 +13,12 @@ import {
   useUpdateClub,
   useUpdateClubAgeGroups,
   useUploadCrest,
+  useVenueLayouts,
 } from '../lib/queries'
 import { useClubBranding } from '../hooks/useClubBranding'
 import type { Club } from '../lib/data'
 import { AGE_GROUP_MAX_LENGTH, ageGroupProblem, normaliseAgeGroups, trimAgeGroup } from '../lib/ageGroups'
+import { layoutsUnderRemovedLabels } from '../lib/venueLayout'
 import { Icon } from '../components/icons'
 import { Button, Card, IconButton, Note, TextField } from '../components/primitives'
 import { ErrorNote, Loading, LoadingRows } from '../components/ui'
@@ -244,8 +246,20 @@ export function AgeGroupsCard({ clubId }: { clubId: string }) {
   )
 }
 
+// What removing a label from the draft would leave behind: layouts stay
+// stored under it and stop resolving until it is added back. Said before
+// the save rather than after, in the label's own words.
+function removedLabelsNote(draft: readonly string[], stored: readonly string[], layouts: readonly { ageGroup: string }[]): string | null {
+  const removed = stored.filter((l) => !draft.includes(l))
+  const affected = removed.filter((l) => layouts.some((x) => x.ageGroup === l))
+  if (affected.length === 0) return null
+  const counts = affected.map((l) => `${l} (${layouts.filter((x) => x.ageGroup === l).length})`)
+  return `Venue layouts are drawn under ${counts.join(', ')}. They stay stored and stop being found until the label is on the list again.`
+}
+
 function AgeGroupsEditor({ clubId, stored }: { clubId: string; stored: string[] }) {
   const update = useUpdateClubAgeGroups()
+  const layouts = useVenueLayouts()
   const [draft, setDraft] = useState<string[]>(stored)
   // The stored list the draft was taken from. A fresh read that differs from
   // it is somebody else's save: an untouched draft follows it silently, an
@@ -339,6 +353,14 @@ function AgeGroupsEditor({ clubId, stored }: { clubId: string; stored: string[] 
           Add
         </Button>
       </div>
+      {(() => {
+        const warning = removedLabelsNote(draft, stored, layoutsUnderRemovedLabels(layouts.data ?? [], draft))
+        return warning ? (
+          <Note tone="warning" role="status" className="admin-note">
+            {warning}
+          </Note>
+        ) : null
+      })()}
       <div className="venue-layout-acts">
         <Button variant="primary" icon={Icon.check} disabled={!changed || update.isPending} onClick={save}>
           {update.isPending ? 'Saving…' : 'Save age groups'}

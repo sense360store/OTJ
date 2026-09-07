@@ -15,6 +15,7 @@ import {
   layoutShapeLabel,
   layoutSignature,
   layoutsForScope,
+  layoutsUnderRemovedLabels,
   moveZone,
   parseVenueLayoutZones,
   renameZone,
@@ -310,15 +311,17 @@ const layout = (over: Partial<VenueLayout>): VenueLayout => ({
   kind: 'stations',
   slots: 4,
   zones: emptyLayoutZones(FOUR),
+  storedZones: null,
   ...over,
 })
+const CLUB_LIST = ['U7s', 'U8s']
 
 describe('the five no-layout states, and the one found state', () => {
   const seasons = [S2526, S2627, OVERLAP]
   const drawn = [layout({}), layout({ id: 'l2', slots: 5, zones: emptyLayoutZones(FIVE) })]
 
   it('finds the layout for a resolved scope and shape', () => {
-    const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2026-09-08' }, seasons, drawn, 'stations', 5)
+    const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2026-09-08' }, seasons, CLUB_LIST, drawn, 'stations', 5)
     expect(r.state).toBe('found')
     if (r.state === 'found') {
       expect(r.layout.id).toBe('l2')
@@ -328,55 +331,62 @@ describe('the five no-layout states, and the one found state', () => {
   })
 
   it('no venue', () => {
-    expect(resolveLayoutScope({ venueId: null, ageGroup: 'U8s', date: '2026-09-08' }, seasons)).toEqual({ state: 'no-venue' })
+    expect(resolveLayoutScope({ venueId: null, ageGroup: 'U8s', date: '2026-09-08' }, seasons, CLUB_LIST)).toEqual({ state: 'no-venue' })
   })
 
   it('no age group, including whitespace', () => {
-    expect(resolveLayoutScope({ venueId: 'haggs', ageGroup: '  ', date: '2026-09-08' }, seasons)).toEqual({ state: 'no-age-group' })
+    expect(resolveLayoutScope({ venueId: 'haggs', ageGroup: '  ', date: '2026-09-08' }, seasons, CLUB_LIST)).toEqual({ state: 'no-age-group' })
   })
 
   it('season unresolved', () => {
-    expect(resolveLayoutScope({ venueId: 'haggs', ageGroup: 'U8s', date: '2024-09-08' }, seasons)).toEqual({ state: 'season-unresolved' })
+    expect(resolveLayoutScope({ venueId: 'haggs', ageGroup: 'U8s', date: '2024-09-08' }, seasons, CLUB_LIST)).toEqual({ state: 'season-unresolved' })
   })
 
   it('season ambiguous, naming the seasons', () => {
-    const r = resolveLayoutScope({ venueId: 'haggs', ageGroup: 'U8s', date: '2027-03-01' }, seasons)
+    const r = resolveLayoutScope({ venueId: 'haggs', ageGroup: 'U8s', date: '2027-03-01' }, seasons, CLUB_LIST)
     expect(r.state).toBe('season-ambiguous')
     if (r.state === 'season-ambiguous') expect(r.seasons).toHaveLength(2)
   })
 
   it('not drawn: another age group at the same venue does not see the first s layouts', () => {
-    const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U7s', date: '2026-09-08' }, seasons, drawn, 'stations', 4)
+    const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U7s', date: '2026-09-08' }, seasons, CLUB_LIST, drawn, 'stations', 4)
     expect(r.state).toBe('not-drawn')
   })
 
   it('not drawn: a 2025 session does not load the current season s allocation', () => {
-    const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2025-10-14' }, seasons, drawn, 'stations', 4)
+    const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2025-10-14' }, seasons, CLUB_LIST, drawn, 'stations', 4)
     expect(r.state).toBe('not-drawn')
     if (r.state === 'not-drawn') expect(r.season.id).toBe('s25')
   })
 
-  it('not drawn: a legacy age group label the club list does not contain resolves no layout', () => {
-    const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8', date: '2026-09-08' }, seasons, drawn, 'stations', 4)
-    expect(r.state).toBe('not-drawn')
+  it('no age group: a legacy label the club list does not contain resolves no layout, even when a layout is stored under it', () => {
+    const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8', date: '2026-09-08' }, seasons, CLUB_LIST, drawn, 'stations', 4)
+    expect(r.state).toBe('no-age-group')
+    // A label an admin has since removed from the list: the layout stays
+    // stored and stops resolving rather than resurrecting a retired
+    // allocation.
+    const removed = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2026-09-08' }, seasons, ['U7s'], drawn, 'stations', 4)
+    expect(removed.state).toBe('no-age-group')
+    expect(layoutsUnderRemovedLabels(drawn, ['U7s']).map((l) => l.id)).toEqual(['l1', 'l2'])
+    expect(layoutsUnderRemovedLabels(drawn, CLUB_LIST)).toEqual([])
   })
 
   it('not drawn: a row whose value could not be read counts as not drawn', () => {
     const unreadable = [layout({ zones: null })]
-    const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2026-09-08' }, seasons, unreadable, 'stations', 4)
+    const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2026-09-08' }, seasons, CLUB_LIST, unreadable, 'stations', 4)
     expect(r.state).toBe('not-drawn')
   })
 
   it('slot count: three active stations, or six, is a count no layout can hold, not an admin link', () => {
     for (const slots of [0, 3, 6]) {
-      const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2026-09-08' }, seasons, drawn, 'stations', slots)
+      const r = findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2026-09-08' }, seasons, CLUB_LIST, drawn, 'stations', slots)
       expect(r.state).toBe('slot-count')
     }
-    expect(findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2026-09-08' }, seasons, drawn, 'games', 3).state).toBe('slot-count')
+    expect(findVenueLayout({ venueId: 'haggs', ageGroup: 'U8s', date: '2026-09-08' }, seasons, CLUB_LIST, drawn, 'games', 3).state).toBe('slot-count')
   })
 
   it('the scope questions come first, so a session with no venue is no-venue even at an unsupported count', () => {
-    expect(findVenueLayout({ venueId: null, ageGroup: 'U8s', date: '2026-09-08' }, seasons, drawn, 'stations', 3).state).toBe('no-venue')
+    expect(findVenueLayout({ venueId: null, ageGroup: 'U8s', date: '2026-09-08' }, seasons, CLUB_LIST, drawn, 'stations', 3).state).toBe('no-venue')
   })
 
   it('lists the layouts of one scope for the admin screen', () => {

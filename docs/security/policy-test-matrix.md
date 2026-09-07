@@ -348,8 +348,14 @@ the key itself. A season holding layouts is not removable; removing a venue
 takes its layouts with it. The trail is `venue_layout.created`,
 `venue_layout.updated` naming `zones` alone for a redraw (a write that changes
 nothing writes nothing) and `venue_layout.deleted`, each with no value, and
-the trigger function refuses a direct `/rpc` call from every role with
-`42501`. `clubs.age_groups` is written under `club.manage` alone, read by
+the trigger function is not reachable through `/rpc` from any role (PostgREST
+does not expose a trigger function, so the call fails to resolve before any
+privilege is consulted, and the suite reads `has_function_privilege` back to
+prove `anon` and `authenticated` hold no EXECUTE on it either). A redraw is
+conditional on the stored value the draft opened on: the update carries the
+zones the read returned as a filter, so a second admin's redraw finds no row,
+lands nothing and is reported as changed elsewhere rather than overwriting
+the first. `clubs.age_groups` is written under `club.manage` alone, read by
 every member of the club and by no other club, and bounded by
 `clubs_age_groups_valid` for every caller. Grants: anon nothing, authenticated
 exactly the four verbs.

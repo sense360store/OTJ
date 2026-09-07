@@ -332,6 +332,28 @@ describe('venue layouts row level security', () => {
     )
   })
 
+  it('a redraw is conditional on the value it opened on, so two admins cannot silently overwrite each other', async () => {
+    const { data: fresh, error } = await admin
+      .from('venue_layouts')
+      .insert(scope({ kind: 'games', slots: 2, zones: { version: 1, zones: [{ n: 1, x: 0.02, y: 0.1, w: 0.45, h: 0.8 }, { n: 2, x: 0.53, y: 0.1, w: 0.45, h: 0.8 }] }, age_group: 'U9s' }))
+      .select('id, zones')
+      .single()
+    expect(error).toBeNull()
+    const opened = fresh!.zones
+    const theirs = { version: 1, zones: [{ n: 1, x: 0.05, y: 0.1, w: 0.4, h: 0.8 }, { n: 2, x: 0.55, y: 0.1, w: 0.4, h: 0.8 }] }
+    const mine = { version: 1, zones: [{ n: 1, x: 0.02, y: 0.15, w: 0.45, h: 0.7 }, { n: 2, x: 0.53, y: 0.15, w: 0.45, h: 0.7 }] }
+    // The first redraw lands: the row still holds what was opened.
+    const { data: first } = await admin.from('venue_layouts').update({ zones: theirs }).eq('id', fresh!.id).eq('zones', opened as never).select('id')
+    expect(first).toHaveLength(1)
+    // The second, opened on the same value, finds no row and lands nothing.
+    const { data: second, error: secondErr } = await admin.from('venue_layouts').update({ zones: mine }).eq('id', fresh!.id).eq('zones', opened as never).select('id')
+    expect(secondErr).toBeNull()
+    expect(second).toEqual([])
+    const { data: held } = await admin.from('venue_layouts').select('zones').eq('id', fresh!.id).single()
+    expect(held?.zones).toEqual(theirs)
+    await admin.from('venue_layouts').delete().eq('id', fresh!.id)
+  })
+
   it('the trigger function is not callable through the API by anyone', async () => {
     // PostgREST does not expose a function returning trigger at all, so the
     // call fails to resolve (PGRST202) before any privilege is consulted;

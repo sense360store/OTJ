@@ -195,6 +195,7 @@ const countedWrite = (name: 'insertVenue' | 'renameVenue' | 'deleteVenue' | 'sav
           kind: v.shape.kind,
           slots: v.shape.slots,
           zones: v.zones,
+          storedZones: null,
         }
         opts?.onSuccess?.(row)
         return
