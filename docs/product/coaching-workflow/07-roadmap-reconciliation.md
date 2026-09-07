@@ -82,12 +82,15 @@ share half is deliberately held as **DRILL-02b**.
 **Recommendation: no status change**, and one wording correction so the header
 line does not read as though #189 were still open (section 5).
 
-**DRILL-02b stays where #189 left it**, outside this programme. It would require
-changing the Edge `DRILL_COLS`, `projectDrillFields`, `TOP_ALLOWED` and
-`REF_DRILL_ALLOWED`, removing `'diagram'` from `FORBIDDEN_ANYWHERE`, the three
-client snapshot types and their mirrored key sets, redeploying both Edge
-Functions, and refreshing every existing share because a snapshot is frozen. It
-is a prerequisite for nothing here.
+**DRILL-02b stays outside this programme**, and has since been built as its own
+reviewed change. It changed exactly what this paragraph foresaw: the Edge
+`DRILL_COLS`, `projectDrillFields`, `TOP_ALLOWED` and `REF_DRILL_ALLOWED`, the
+removal of `'diagram'` from `FORBIDDEN_ANYWHERE`, the client snapshot types and
+their mirrored key sets, and a redeploy of both Edge Functions, which is held
+until the content sharing deploy pin is reconciled with the COACH-5 lane.
+Existing shares are frozen and gain a diagram only by their owner's refresh.
+The contract is `docs/security/content-sharing-boundary.md` section 55. It is a
+prerequisite for nothing here.
 
 **Print needs no row.** #189 traced it: `window.print()` exists once in `src/`,
 in `PublicShare.tsx`, and `@media print` targets only `.public-*`. There is no

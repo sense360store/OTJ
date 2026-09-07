@@ -1266,3 +1266,173 @@ cannot be cleared by reclassifying the programme row.
   model, expiry or the kill switch.
 - No new anonymous surface: `read-content-share` remains the only function
   reachable without a JWT, and `manage-content-share` keeps `verify_jwt = true`.
+
+## 55. The drill diagram projection (DRILL-02b)
+
+DRILL-02b publishes a coach drawn Drill Maker diagram (`drills.diagram`,
+migration 0046) into the public drill, session and programme snapshots, and
+therefore onto the public page and onto paper, since print renders the
+snapshot DOM and nothing else (section 38). It is the one widening of the
+public payload this change makes, and it is a projection change only: **no
+migration, no policy, no grant, no change to the lifecycle RPC, the read
+function's SQL, the secret model, expiry or the kill switch.** Both Edge
+Functions change, because they share `_shared/share.ts`, and both must be
+redeployed together (section 55.6).
+
+### 55.1 What is projected, and through what
+
+- `projectDrillDiagram` in `_shared/share.ts` is a positive allow list of its
+  own, the same discipline as the board tokens. It rebuilds each element field
+  by field from one of seven exact shapes and never spreads its input:
+  `player(type, x, y, colour, label)`, `cone(type, x, y, colour)`,
+  `ball(type, x, y)`, `goal(type, x, y, width, facing)`,
+  `arrow(type, x1, y1, x2, y2, arrow)`, `zone(type, x, y, w, h, colour)`,
+  `text(type, x, y, text)`. The diagram itself is `{ surface: { kind,
+  orientation }, elements: [...] }`.
+- **The public shape is narrower than the stored one.** An element's `id` is
+  not projected (it is a free text column value a React key does not need,
+  and the browser mints render only ids by position), and the diagram's
+  `version` is not projected (the snapshot version pins the shape). So a
+  diagram carries exactly two free text fields, the player badge (three
+  characters) and the label (twenty four), and both pass through
+  `sanitizeText`. Coordinates are clamped to the surface and rounded to four
+  places. The cap on the two text fields is in UTF-16 code units, as both
+  validators measure, and a cut that would land inside a surrogate pair drops
+  the dangling half, so the public copy is always well formed; both validators
+  refuse a lone surrogate outright. At most sixty elements are projected, a
+  repeated stored id keeps the first element (as the client parser does), and
+  an empty or unreadable
+  diagram projects as `null`, which is also what a drill with no diagram
+  projects. Only a stored version other than 1 refuses the diagram whole.
+- **Only a `public_full` drill projects a diagram.** The coach facing wording
+  for `public_link_only` is "The words can go in a public link. Photos,
+  diagrams, clips and PDFs stay inside the club", and a hand drawn diagram is
+  a diagram, so the drill's own rights gate it exactly as a media row's rights
+  gate its file: a text only drill publishes its words and nothing it drew.
+  Found by the adversarial review of this change and pinned on all three
+  kinds. Residual, stated rather than solved: a media row is re-checked at
+  read time, while a referenced drill's rights are re-checked at read time
+  only against `internal_only` (0040), so a drill lowered from `public_full`
+  to `public_link_only` after a share was built keeps serving its frozen
+  diagram until the owner refreshes or revokes. Closing that would be a read
+  time rule in `read_public_share`, which is a gated migration, and it is
+  the same family as the frozen `_path` residual in section 38a.
+- **An England Football derived drill projects no diagram, whatever the row
+  holds.** The club's licence allows FA images unmodified and never redrawn;
+  a hand drawn diagram on an FA drill is that redrawing. This is the same rule
+  `diagramForDisplay` applies on the planner, session day and both live
+  stages, derived from the row's recorded source (`rowProvenance`), never
+  from its rights value. The FA's own image still travels through the media
+  pool under its attribution.
+- The field is `diagram` on the standalone drill snapshot and on every
+  referenced drill in a session or programme snapshot. `TOP_ALLOWED` and
+  `REF_DRILL_ALLOWED` name it; `DIAGRAM_ALLOWED`, `DIAGRAM_SURFACE_ALLOWED`
+  and the per type `DIAGRAM_ELEMENT_ALLOWED` sets bound what it may contain,
+  and `assertAllowlistedKeys` walks it at every level of every kind. The
+  browser mirrors the shape in `src/lib/publicDiagram.ts` and
+  `src/lib/publicShare.ts`, and `src/lib/publicShare.invariant.test.ts`
+  compares the two runtimes against each other and against the 0046 check
+  constraint's key lists minus `id`.
+- The one column read that widened is `DRILL_COLS` in
+  `manage-content-share`, which now selects `diagram`. The client's own
+  `DRILL_COLS` in `src/lib/queries.ts` deliberately still omits it, so the
+  library, the planner and every list read remain exactly as narrow as before.
+
+### 55.2 What is not projected, and what is now forbidden instead
+
+- Nothing else. No player, register, bib, group, game, Spond, venue, time or
+  live state fact enters any snapshot; the session operational columns stay
+  unread by the builders (section 26) and the forbidden list still names all
+  of them.
+- `'diagram'` is removed from `FORBIDDEN_ANYWHERE` and from the browser's
+  `FORBIDDEN`, because it is now allow listed. In its place both lists gain
+  the identity keys the 0046 boundary names as the things no element may
+  ever hold: `name`, `display_name`, `displayName`, `full_name`, `fullName`,
+  `guardian`, `email`, `phone`, `shirt_number`, `shirtNumber`. None exists in
+  any projection today; a future shape that carried one trips the scanner
+  rather than leaks. Every previously forbidden key stays forbidden, which
+  `share_test.ts` pins key by key.
+
+### 55.3 Fail closed on read
+
+- `isPublicDrillDiagram` (server) and `validatePublicDiagram` (browser)
+  accept `null` and the exact public shape, and nothing wider or malformed:
+  an element `id`, a stored `version`, an unknown element type, a key outside
+  the type's set, an identity key, a non finite or off surface number, a label
+  or text over its cap, a lone surrogate, an unknown colour, facing, arrow or
+  surface kind, a goal width or zone size outside what the projection emits
+  (a zone must be at least the minimum size and sit wholly on the surface), an
+  empty element list or one over the cap. A diagram that fails makes the
+  WHOLE snapshot invalid: `read-content-share` answers the neutral
+  unavailable response and the page renders the neutral state with no print
+  action, exactly as a leaked `playerId` on a board token has done since PR 3.
+
+### 55.4 Frozen shares, and how one gains a diagram
+
+A snapshot is a frozen copy, so **no existing share gains a diagram by this
+change being deployed**, and that is stated rather than worked around:
+
+- A snapshot built before DRILL-02b carries no `diagram` key on its drill
+  fields at all. Both scanners and all six validators (three per runtime)
+  treat that absence as "no diagram" and accept the snapshot unchanged, so
+  every existing link keeps serving exactly what it froze. The page and the
+  preview render no diagram block for it.
+- A snapshot built since DRILL-02b always states its answer: `diagram` is
+  present, as the projection or as `null`. Absence therefore means "frozen
+  before", never "nothing to show", and the two are told apart without a
+  version bump.
+- `snapshotVersion` stays `1` on both sides. The read path refuses any other
+  version in SQL (0039 onward), so a bump would take every existing link
+  unavailable at once and would need a migration; the widening is additive
+  instead.
+- **The one repair path is the owner's refresh** ("Update what people see" in
+  the Share dialog), which reads the live rows and rebuilds the snapshot
+  through the same builder create uses, keeping the secret and the URL. Rotate
+  replaces the secret and never rebuilds; revoke clears; nothing rebuilds a
+  share without an owner action: no sweep, no cron, no read time rewrite, and
+  the club wide Shared links screen still offers no refresh, because
+  republishing an owner's content on their behalf changes what the public sees
+  without the owner knowing. A coach who wants a published diagram on a link
+  they made before this change presses Update what people see once.
+- The security suite proves the database carries the new field without
+  change: a diagram bearing snapshot round trips `manage_content_share` and
+  `read_public_share` unchanged, a frozen snapshot reads back without the key,
+  and a refresh replaces the copy whole.
+
+### 55.5 Size
+
+A maximal diagram (sixty of the widest element) is under 6 KiB, and six of
+them in one session are under a quarter of the 256 KiB snapshot cap, both
+pinned in `share_test.ts`. The cap became reachable by a session with this
+change (roughly forty distinct drills each carrying a maximal diagram), and
+until now only the programme builder measured it; a session over it reached
+the lifecycle RPC's bare exception and the coach saw a generic failure. All three
+builders now measure their output with `jsonbTextBytes`, which counts the
+bytes the way `content_share_resolve_snapshot` does (`octet_length` of the
+jsonb text form, with its `", "` and `": "` separators, about thirteen
+percent wider than compact JSON), so a builder never passes what the RPC then
+refuses. A session or a standalone drill over the cap is refused with
+`snapshot_too_large` on preview, create and refresh, worded for the coach like
+the programme case, and the eligibility functions are unchanged because the
+cap is measurable only after projection. The drill case is real: sixty four
+coaching points at the text cap sit just under the size cap on their own
+(256701 bytes against 262144, measured through the builder), and a maximal
+diagram carries the drill over it, which the exact head security review found
+after the session preflight landed.
+
+### 55.6 Deployment gate
+
+Both `manage-content-share` and `read-content-share` import the changed
+shared module and must be deployed together through the gated content
+sharing deploy workflow, verified by byte for byte readback, **and in this
+order: `read-content-share` first.** Each function bundles its own copy of
+the shared module, so if the management function deployed first, every share
+created or refreshed in the window would carry a `diagram` key the old read
+function's deny list still refuses, and those links would read as unavailable
+until the second deploy landed. The reverse order is safe: the new read
+function accepts absence. **That deploy is
+held** until the content sharing inventory pin (`EXPECTED_LAST_MIGRATION` in
+`verify_no_residue.py`) is reconciled with whatever the COACH-5 migration lane
+applies to the hosted ledger; the pin is not moved to make a deploy pass. Until
+the deploy, the merged code changes nothing in production: the deployed
+builders keep omitting the diagram and every link keeps serving what it froze.

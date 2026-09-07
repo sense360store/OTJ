@@ -28,7 +28,7 @@ import { PublicProgrammeView } from './PublicProgrammeView'
 import { PublicSessionView } from './PublicSessionView'
 import { RightsControl } from './RightsControl'
 import { useShare } from '../hooks/useShare'
-import { canonicalUrl, copyLink, SHARE_ACCOUNT_NOTE, shareLink } from '../lib/share'
+import { clubLinkPayload, copyLink, SHARE_ACCOUNT_NOTE, shareLink } from '../lib/share'
 import type { ContentRights } from '../lib/data'
 import { type SourceFields } from '../lib/contentRights'
 import {
@@ -603,7 +603,7 @@ export function ShareDialog({
                 label="Copy the club link"
                 note={SHARE_ACCOUNT_NOTE}
                 feedback={internalFeedback}
-                onShare={() => shareInternal({ url: canonicalUrl(kind, sourceId), title, text: title })}
+                onShare={() => shareInternal(clubLinkPayload(kind, sourceId, title))}
               />
             </section>
           )}

@@ -130,7 +130,7 @@ and the public route, page and share-control views by the Vitest suites
 `src/routes/PublicShare.test.tsx` and `src/routes/PublicShare.print.test.tsx`
 (the last proving the browser Print / Save as PDF action consumes the validated
 public projection only, makes no request, and can carry no operational field to
-paper).
+paper). The DRILL-02b drill diagram projection is proven to pass the same path unchanged: a diagram bearing drill or session snapshot is stored by the RPC and returned by `read_public_share` exactly as built, a snapshot frozen without the key reads back without it, and a refresh replaces the copy whole (`docs/security/content-sharing-boundary.md` section 55).
 
 ## Signup membership boundary
 

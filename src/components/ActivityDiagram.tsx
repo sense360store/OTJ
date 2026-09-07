@@ -25,9 +25,10 @@
 // fetched once and TanStack dedupes concurrent mounts of the same drill. A
 // batched read over the session's drill ids would be a SECOND cache shape
 // holding rows already cached under the first, which is the duplicated diagram
-// state this work exists to avoid. DRILL_COLS is deliberately never widened to
-// carry the column, so the library list, the planner's drill read and the share
-// snapshot builders still cannot see a diagram.
+// state this work exists to avoid. The client's DRILL_COLS is deliberately
+// never widened to carry the column, so the library list and the planner's
+// drill read still cannot see a diagram. The share snapshot builders read it on
+// the server since DRILL-02b, through their own allow list (_shared/share.ts).
 //
 // IT CARRIES NO PERSON. A diagram holds generic players; there is no name, no
 // playerId and no register lookup here or in anything it renders. Tonight's

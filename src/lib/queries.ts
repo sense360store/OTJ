@@ -1542,10 +1542,12 @@ export function useUpdateDrill() {
 // The diagram is read and written on its OWN, never as part of a drill row.
 // Three things follow from that, all deliberate:
 //
-//   1. DRILL_COLS does not gain `diagram`, so the library list, the planner,
-//      the share snapshot builders and every other drill read carry exactly
-//      what they carried before. A diagram cannot leak through a path that was
-//      never told about it, and the list payload does not grow.
+//   1. DRILL_COLS does not gain `diagram`, so the library list, the planner
+//      and every other client drill read carry exactly what they carried
+//      before. A diagram cannot leak through a path that was never told about
+//      it, and the list payload does not grow. The one reader outside this
+//      hook is the server side share builder (DRILL-02b), which projects it
+//      through its own allow list rather than through any client read.
 //   2. The save sends ONE column. A coach with an editor open holds a drill
 //      that another coach may have renamed since; a whole-row update would put
 //      the stale title back. This one cannot, whatever it is holding.

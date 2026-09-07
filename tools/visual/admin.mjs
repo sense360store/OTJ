@@ -133,6 +133,17 @@ const READ_POSITIONS = [
   { id: 'argonauts', sortOrder: 4 },
 ]
 const UNSET_POSITIONS = READ_POSITIONS.map((r) => ({ id: r.id, sortOrder: null }))
+/* The screen's own statement that a save LANDED, for a drive that has to act
+   after one. It is the thing to wait for because it renders only once the
+   read holds exactly the order this admin saved. The "Saved club order. Move
+   a team" hint is NOT: the screen shows it for the whole round trip between
+   Save being pressed and the refetch landing (`dirty={unsaved}`, and
+   `unsaved` is suppressed while a read is awaited), so a drive waiting on it
+   resolved with the write still in flight, landed the other admin's order
+   FIRST, and then watched this screen's own save apply over it, which read
+   as the success note surviving another admin's order on about one run in
+   two. */
+const savedNote = (page) => page.locator('.note-success[role="status"]').filter({ hasText: 'Team order saved' })
 /* The LAST write of a name, with its arguments, compared whole: the order
    entries claim what was sent, which a counter cannot say. */
 const lastWriteWas = (page, name, vars) =>
@@ -1651,16 +1662,30 @@ export const TEAM_FLOWS = [
     key: 'teams-order-failed',
     screen: 'adminteams',
     state: 'writefails',
-    note: 'the order write refused: the alert says so and holds focus, the list keeps the arrangement as unsaved after the refetch lands, no success is claimed, no refresh warning is raised, and Save is offered again rather than the refusal being swallowed',
+    /* A failed save leaves NO draft (`onError: () => setDraft(null)` on the
+       screen, argued beside `draftAfterSaved` in teamOrder.ts): the list goes
+       back to what is STORED once the refetch lands, which is what every
+       refusal sentence promises ("the list has been refreshed"). An earlier
+       version of this entry expected the arrangement kept as unsaved with
+       Save offered again, which was the second of the two answers that file
+       records as wrong; the harness modelled it for a day after the product
+       moved on. Stored here is 2, 1, 3, 5, 4 in array order, so the list
+       reads Trojans first and Titans back where it was before the move. */
+    note: 'the order write refused: the alert says so and holds focus, the refused write carried the arrangement and the positions the screen read, the draft is dropped so the list shows the stored order again once the refetch lands, no success is claimed, no refresh warning is raised, and Save is withheld because nothing is left to save',
     proof: async (page) =>
       (await page.locator('.note-danger[role="alert"]').filter({ hasText: 'Could not save the team order' }).count()) === 1 &&
       (await page.evaluate(() => !!document.activeElement?.querySelector('.note-danger[role="alert"]'))) &&
-      (await orderOf(page)).join(',') === 'Titans,Trojans,Gladiators,Argonauts,Spartans' &&
-      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 1 &&
+      (await calls('saveTeamOrder', 1)(page)) &&
+      (await lastWriteWas(page, 'saveTeamOrder', {
+        orderedIds: ['titans', 'trojans', 'gladiators', 'argonauts', 'spartans'],
+        expected: READ_POSITIONS,
+      })) &&
+      (await orderOf(page)).join(',') === 'Trojans,Titans,Gladiators,Argonauts,Spartans' &&
+      (await positionsOf(page)).join(',') === '1,2,3,4,5' &&
+      (await page.locator('.admin-order-save .admin-hint').filter({ hasText: 'Not saved yet' }).count()) === 0 &&
       (await page.locator('.note-warning[role="status"]').count()) === 0 &&
-      !(await saveOrderButton(page).isDisabled()) &&
-      (await page.locator('.note-success').count()) === 0 &&
-      (await calls('saveTeamOrder', 1)(page)),
+      (await saveOrderButton(page).isDisabled()) &&
+      (await page.locator('.note-success').count()) === 0,
     drive: async (page) =>
       (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
       (await click(saveOrderButton(page))),
@@ -1726,11 +1751,7 @@ export const TEAM_FLOWS = [
     drive: async (page) =>
       (await click(page.getByRole('button', { name: 'Move Titans up', exact: true }))) &&
       (await click(saveOrderButton(page))) &&
-      (await page
-        .locator('.admin-hint')
-        .filter({ hasText: 'Saved club order. Move a team' })
-        .waitFor()
-        .then(() => true)) &&
+      (await savedNote(page).waitFor().then(() => true)) &&
       (await page
         .evaluate(() => window.__adminStore.saveTeamOrder(['spartans', 'argonauts', 'gladiators', 'titans', 'trojans']))
         .then(() => true)),
@@ -1747,11 +1768,7 @@ export const TEAM_FLOWS = [
       (await saveOrderButton(page).isDisabled()),
     drive: async (page) =>
       (await click(saveOrderButton(page))) &&
-      (await page
-        .locator('.admin-hint')
-        .filter({ hasText: 'Saved club order. Move a team' })
-        .waitFor()
-        .then(() => true)) &&
+      (await savedNote(page).waitFor().then(() => true)) &&
       (await page
         .evaluate(() => window.__adminStore.saveTeamOrder(['spartans', 'argonauts', 'gladiators', 'titans', 'trojans']))
         .then(() => true)),

@@ -393,3 +393,68 @@ describe('PRINT_WARNING', () => {
     expect(PRINT_WARNING).toBe('A downloaded or printed copy cannot be turned off or recalled.')
   })
 })
+
+// -------------------------------------------------------------------------
+// The drill diagram in a public snapshot (DRILL-02b)
+// -------------------------------------------------------------------------
+
+const DIAGRAM = {
+  surface: { kind: 'half_pitch' as const, orientation: 'landscape' as const },
+  elements: [
+    { type: 'player' as const, x: 0.5, y: 0.5, colour: 'blue' as const, label: '9' },
+    { type: 'arrow' as const, x1: 0.1, y1: 0.1, x2: 0.6, y2: 0.7, arrow: 'pass' as const },
+    { type: 'text' as const, x: 0.5, y: 0.9, text: 'Press' },
+  ],
+}
+
+describe('the diagram in a public snapshot', () => {
+  it('a drill snapshot accepts a well formed diagram, a null one, and no key at all (frozen)', () => {
+    expect(validatePublicDrillSnapshot(snapshot({ diagram: DIAGRAM }))).toBe(true)
+    expect(validatePublicDrillSnapshot(snapshot({ diagram: null }))).toBe(true)
+    // The helper sets no diagram, which is what a share frozen before
+    // DRILL-02b carries.
+    expect('diagram' in snapshot()).toBe(false)
+    expect(validatePublicDrillSnapshot(snapshot())).toBe(true)
+  })
+
+  it('a drill snapshot fails closed on a malformed or over wide diagram', () => {
+    const wide = { ...DIAGRAM, elements: [{ ...DIAGRAM.elements[0], id: 'player-1' }] }
+    expect(validatePublicDrillSnapshot(snapshot({ diagram: wide as never }))).toBe(false)
+    const unknownType = { ...DIAGRAM, elements: [{ type: 'hologram', x: 0.5, y: 0.5 }] }
+    expect(validatePublicDrillSnapshot(snapshot({ diagram: unknownType as never }))).toBe(false)
+    const identity = { ...DIAGRAM, elements: [{ ...DIAGRAM.elements[0], playerId: 'p' }] }
+    expect(validatePublicDrillSnapshot(snapshot({ diagram: identity as never }))).toBe(false)
+    const nan = { ...DIAGRAM, elements: [{ type: 'ball', x: Number.NaN, y: 0.5 }] }
+    expect(validatePublicDrillSnapshot(snapshot({ diagram: nan as never }))).toBe(false)
+    expect(validatePublicDrillSnapshot(snapshot({ diagram: 'a drawing' as never }))).toBe(false)
+  })
+
+  it('a session referenced drill takes the same three answers and the same refusals', () => {
+    const withDiagram = (diagram: unknown) => {
+      const s = sessionSnapshot()
+      return { ...s, referencedDrills: [{ ...s.referencedDrills[0], diagram }] } as never
+    }
+    expect(validatePublicSessionSnapshot(withDiagram(DIAGRAM))).toBe(true)
+    expect(validatePublicSessionSnapshot(withDiagram(null))).toBe(true)
+    expect(validatePublicSessionSnapshot(sessionSnapshot())).toBe(true)
+    expect(validatePublicSessionSnapshot(withDiagram({ ...DIAGRAM, version: 1 }))).toBe(false)
+    expect(validatePublicSessionSnapshot(withDiagram({ ...DIAGRAM, elements: [] }))).toBe(false)
+  })
+
+  it('a programme referenced drill takes the same three answers and the same refusals', () => {
+    const withDiagram = (diagram: unknown) => {
+      const s = programmeSnapshot() as { referencedDrills: Record<string, unknown>[] }
+      return { ...s, referencedDrills: [{ ...s.referencedDrills[0], diagram }] } as never
+    }
+    expect(validatePublicProgrammeSnapshot(withDiagram(DIAGRAM))).toBe(true)
+    expect(validatePublicProgrammeSnapshot(withDiagram(null))).toBe(true)
+    expect(validatePublicProgrammeSnapshot(programmeSnapshot())).toBe(true)
+    expect(validatePublicProgrammeSnapshot(withDiagram({ surface: DIAGRAM.surface, elements: [{ type: 'ball', x: 0.5, y: 0.5, name: 'R' }] }))).toBe(false)
+  })
+
+  it('the identity keys are forbidden anywhere, and the diagram key no longer is', () => {
+    for (const key of ['name', 'display_name', 'shirt_number', 'guardian', 'email', 'phone']) {
+      expect(validatePublicDrillSnapshot({ ...snapshot(), sourceAttribution: { url: 'https://x', label: null, [key]: 'x' } } as never), key).toBe(false)
+    }
+  })
+})

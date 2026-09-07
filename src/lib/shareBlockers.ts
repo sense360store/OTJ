@@ -89,6 +89,7 @@ const ORDER: Record<ShareKindNoun, readonly string[]> = {
   drill: [
     'media_missing',
     'media_path_invalid',
+    'snapshot_too_large',
     'source_internal_only',
     'media_internal_only',
   ],
@@ -98,6 +99,7 @@ const ORDER: Record<ShareKindNoun, readonly string[]> = {
     'media_missing',
     'board_missing',
     'media_path_invalid',
+    'snapshot_too_large',
     'source_internal_only',
     'drill_internal_only',
     'media_internal_only',
@@ -206,7 +208,7 @@ export function shareBlockerView(
     case 'too_many_media':
       return { code, headline: 'This programme uses more files than we can share in one link.', action: 'none' }
     case 'snapshot_too_large':
-      return { code, headline: 'This programme is too large to share in one link.', action: 'none' }
+      return { code, headline: `This ${noun} is too large to share in one link.`, action: 'none' }
     case 'source_internal_only':
       return {
         code,

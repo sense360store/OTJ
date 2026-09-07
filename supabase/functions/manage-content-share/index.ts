@@ -57,6 +57,7 @@ import {
   evaluateProgrammeEligibility,
   evaluateSessionEligibility,
   ProgrammeBuildError,
+  SnapshotBuildError,
   generateSecret,
   type MediaRow,
   type ProgrammeRow,
@@ -81,8 +82,15 @@ const MAX_BODY_BYTES = 8 * 1024
 // provenance answer aligned with what migration 0043 actually refuses. It is
 // never projected: the builder copies an explicit allow list, and source_key is
 // in FORBIDDEN_ANYWHERE, so a future leak trips the scanner rather than shipping.
+//
+// diagram is the saved Drill Maker diagram (0046), read since DRILL-02b. It is
+// the ONE column widening that change made, and it is projected only through
+// projectDrillDiagram's allow list in _shared/share.ts (no element id, no key
+// outside the seven public shapes, nothing on an England Football derived
+// drill). The client's own DRILL_COLS in src/lib/queries.ts deliberately still
+// omits it; this read is the sharing builders' and nobody else's.
 const DRILL_COLS =
-  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, setup_notes, easier, harder, theme, format, source_url, source_label, source_key, media_id, rights'
+  'id, club_id, title, summary, corner, skill, level, ages, duration, players, area, equipment, points, tags, setup_notes, easier, harder, theme, format, source_url, source_label, source_key, media_id, rights, diagram'
 const MEDIA_COLS = 'id, club_id, name, type, storage_path, yt_url, embed_url, source_url, source_label, rights'
 const SESSION_COLS =
   'id, club_id, name, focus, age_group, intentions, space, activities, board_id, source_url, source_label, rights'
@@ -272,6 +280,21 @@ async function hasPerm(db: any, capability: string): Promise<boolean | null> {
 // nothing new reaches the client.
 function programmeBuildReason(err: unknown): string {
   return err instanceof ProgrammeBuildError ? err.reason : 'snapshot_too_large'
+}
+
+// The session builder's stated refusal (today only the size cap, measurable
+// after projection). Anything else is not a refusal but a defect, and it is
+// rethrown so the outer handler reports it as an unexpected failure rather
+// than dressing it as a reason the coach could act on.
+function sessionBuildReason(err: unknown): string {
+  if (err instanceof SnapshotBuildError) return err.reason
+  throw err
+}
+
+// The drill builder's stated refusal, the same shape and the same rule.
+function drillBuildReason(err: unknown): string {
+  if (err instanceof SnapshotBuildError) return err.reason
+  throw err
 }
 
 function errCode(err: any): string {
@@ -542,7 +565,21 @@ async function handlePreview(
   // as create, but only when eligible (the builder refuses restricted content).
   let preview: unknown = null
   if (elig.eligible) {
-    preview = toPublicProjection(buildDrillSnapshot(drill, media, new Date().toISOString()))
+    // The size cap is measurable only after projection; a refusal there is a
+    // blocker with a stated reason, never a 500, so the coach is not offered a
+    // confirmation that would then fail.
+    try {
+      preview = toPublicProjection(buildDrillSnapshot(drill, media, new Date().toISOString()))
+    } catch (err) {
+      return reply(200, {
+        ok: true,
+        eligible: false,
+        blocked: [drillBuildReason(err)],
+        rights: rightsSummary(drill, media),
+        provenance: provenanceOf(drill, { media: media ? [media] : [] }),
+        preview: null,
+      })
+    }
   }
   return reply(200, {
     ok: true,
@@ -562,7 +599,22 @@ async function handlePreviewSession(admin: AdminClient, clubId: string, sourceId
   const elig = withPathBlockers(evaluateSessionEligibility(session, drills, media, board), media)
   let preview: unknown = null
   if (elig.eligible) {
-    preview = toPublicSessionProjection(buildSessionSnapshot(session, drills, media, board, new Date().toISOString()))
+    // The builder can still refuse on the size cap, measurable only after
+    // projection. Surface that as a blocker rather than a 500, so the coach
+    // sees a stated reason and is never offered a confirmation that would
+    // then fail.
+    try {
+      preview = toPublicSessionProjection(buildSessionSnapshot(session, drills, media, board, new Date().toISOString()))
+    } catch (err) {
+      return reply(200, {
+        ok: true,
+        eligible: false,
+        blocked: [sessionBuildReason(err)],
+        rights: { source: session.rights as ContentRights },
+        provenance: provenanceOf(session, { drills, media }),
+        preview: null,
+      })
+    }
   }
   return reply(200, {
     ok: true,
@@ -639,7 +691,12 @@ async function handleCreate(
     return reply(422, { error: 'This drill cannot be shared publicly.', blocked: elig.blocked })
   }
 
-  const snapshot = buildDrillSnapshot(drill, media, new Date().toISOString())
+  let snapshot
+  try {
+    snapshot = buildDrillSnapshot(drill, media, new Date().toISOString())
+  } catch (err) {
+    return reply(422, { error: 'This drill cannot be shared publicly.', blocked: [drillBuildReason(err)] })
+  }
   const secret = generateSecret()
   const secretHash = await secretHashLiteral(secret)
 
@@ -703,7 +760,12 @@ async function handleCreateSession(
     return reply(422, { error: 'This session cannot be shared publicly.', blocked: elig.blocked })
   }
 
-  const snapshot = buildSessionSnapshot(session, drills, media, board, new Date().toISOString())
+  let snapshot
+  try {
+    snapshot = buildSessionSnapshot(session, drills, media, board, new Date().toISOString())
+  } catch (err) {
+    return reply(422, { error: 'This session cannot be shared publicly.', blocked: [sessionBuildReason(err)] })
+  }
   const secret = generateSecret()
   const secretHash = await secretHashLiteral(secret)
 
@@ -832,7 +894,12 @@ async function handleRefresh(admin: AdminClient, caller: Caller, shareId: string
   if (!elig.eligible) {
     return reply(422, { error: 'This drill can no longer be shared publicly.', blocked: elig.blocked })
   }
-  const snapshot = buildDrillSnapshot(drill, media, new Date().toISOString())
+  let snapshot
+  try {
+    snapshot = buildDrillSnapshot(drill, media, new Date().toISOString())
+  } catch (err) {
+    return reply(422, { error: 'This drill can no longer be shared publicly.', blocked: [drillBuildReason(err)] })
+  }
 
   const { data, error } = await admin.rpc('manage_content_share', {
     p_action: 'refresh',
@@ -864,7 +931,12 @@ async function handleRefreshSession(
   if (!elig.eligible) {
     return reply(422, { error: 'This session can no longer be shared publicly.', blocked: elig.blocked })
   }
-  const snapshot = buildSessionSnapshot(session, drills, media, board, new Date().toISOString())
+  let snapshot
+  try {
+    snapshot = buildSessionSnapshot(session, drills, media, board, new Date().toISOString())
+  } catch (err) {
+    return reply(422, { error: 'This session can no longer be shared publicly.', blocked: [sessionBuildReason(err)] })
+  }
 
   const { data: _data, error } = await admin.rpc('manage_content_share', {
     p_action: 'refresh',

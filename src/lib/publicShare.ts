@@ -20,6 +20,8 @@
 // before rendering, so an unknown or tampered shape shows the neutral
 // unavailable state rather than anything else.
 
+import { type PublicDrillDiagram, validatePublicDiagram } from './publicDiagram'
+
 export const PUBLIC_SNAPSHOT_VERSION = 1
 
 export type PublicMediaType = 'image' | 'pdf' | 'youtube' | 'video'
@@ -63,6 +65,13 @@ export interface PublicDrillSnapshot {
   theme: string | null
   format: string | null
   sourceAttribution: PublicSourceAttribution | null
+  // The saved Drill Maker diagram, projected server side through its own allow
+  // list (DRILL-02b): no element id, no key outside the seven public shapes,
+  // and null on an England Football derived drill or one with nothing to show.
+  // OPTIONAL because a snapshot is a frozen copy: a link made before DRILL-02b
+  // carries no key at all, keeps serving exactly what it froze, and gains a
+  // diagram only when its owner rebuilds it. Absent renders as none.
+  diagram?: PublicDrillDiagram | null
   media: PublicDrillMedia[]
   snapshotAt: string
 }
@@ -118,6 +127,8 @@ export interface PublicReferencedDrill {
   theme: string | null
   format: string | null
   sourceAttribution: PublicSourceAttribution | null
+  // See PublicDrillSnapshot.diagram: the same projection, the same frozen rule.
+  diagram?: PublicDrillDiagram | null
   mediaRefs: string[]
 }
 
@@ -237,7 +248,7 @@ const TOP_KEYS = new Set<string>([
   'snapshotVersion', 'kind', 'title', 'summary', 'classification', 'skill', 'ages',
   'level', 'duration', 'playerGuidance', 'area', 'equipment', 'setupNotes',
   'coachingPoints', 'easier', 'harder', 'theme', 'format', 'sourceAttribution',
-  'media', 'snapshotAt',
+  'diagram', 'media', 'snapshotAt',
 ])
 const MEDIA_KEYS = new Set<string>(['ref', 'type', 'caption', 'sourceAttribution', 'link', 'url'])
 // Kept aligned with FORBIDDEN_ANYWHERE in supabase/functions/_shared/share.ts,
@@ -266,9 +277,12 @@ const FORBIDDEN = new Set<string>([
   'spond_member_id', 'spondMemberId', 'player_spond_links', 'playerSpondLinks',
   'spond_event_responses', 'spondEventResponses', 'matched_by', 'matchedBy',
   'rsvp', 'rsvpStatus',
-  // The drill diagram (0046), kept in step with the server list above. C1 does
-  // not publish a diagram; this is the browser's half of the tripwire.
-  'diagram',
+  // The identity keys no diagram element may hold (0046), kept in step with the
+  // server list above since DRILL-02b published the diagram through its own
+  // allow list. None exists in any projection; a future shape that carried one
+  // fails validation here rather than rendering.
+  'name', 'display_name', 'displayName', 'full_name', 'fullName', 'guardian',
+  'email', 'phone', 'shirt_number', 'shirtNumber',
   'builder', 'public', '_mid', '_path',
 ])
 
@@ -294,6 +308,9 @@ export function validatePublicDrillSnapshot(value: unknown): value is PublicDril
     if (!TOP_KEYS.has(key)) return false
   }
   if (typeof s.title !== 'string') return false
+  // Absent is a snapshot frozen before DRILL-02b; present is the exact public
+  // diagram shape or null, and anything else fails the whole snapshot.
+  if (s.diagram !== undefined && !validatePublicDiagram(s.diagram)) return false
   if (!Array.isArray(s.media)) return false
   for (const m of s.media as unknown[]) {
     if (!m || typeof m !== 'object' || Array.isArray(m)) return false
@@ -317,7 +334,7 @@ const ACTIVITY_KEYS = new Set<string>(['phase', 'duration', 'drillRef', 'customT
 const REF_DRILL_KEYS = new Set<string>([
   'ref', 'title', 'summary', 'classification', 'skill', 'ages', 'level', 'duration',
   'playerGuidance', 'area', 'equipment', 'setupNotes', 'coachingPoints', 'easier',
-  'harder', 'theme', 'format', 'sourceAttribution', 'mediaRefs',
+  'harder', 'theme', 'format', 'sourceAttribution', 'diagram', 'mediaRefs',
 ])
 const BOARD_KEYS = new Set<string>(['formation', 'tokens'])
 const TOKEN_KEYS = new Set<string>(['number', 'side', 'x', 'y'])
@@ -360,6 +377,7 @@ export function validatePublicSessionSnapshot(value: unknown): value is PublicSe
     const dr = d as Record<string, unknown>
     if (!keysWithin(dr, REF_DRILL_KEYS)) return false
     if (typeof dr.ref !== 'string') return false
+    if (dr.diagram !== undefined && !validatePublicDiagram(dr.diagram)) return false
     refs.add(dr.ref)
   }
   // Every activity drill reference must resolve to a referenced drill.
@@ -427,6 +445,7 @@ export function validatePublicProgrammeSnapshot(value: unknown): value is Public
     const dr = d as Record<string, unknown>
     if (!keysWithin(dr, REF_DRILL_KEYS)) return false
     if (typeof dr.ref !== 'string') return false
+    if (dr.diagram !== undefined && !validatePublicDiagram(dr.diagram)) return false
     drillRefs.add(dr.ref)
     if (!Array.isArray(dr.mediaRefs)) return false
     for (const mr of dr.mediaRefs as unknown[]) {
