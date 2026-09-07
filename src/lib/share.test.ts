@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   canNativeShare,
   canonicalPath,
+  clubLinkPayload,
   canonicalUrl,
   copyLink,
   createShareRunner,
@@ -214,5 +215,54 @@ describe('createShareRunner', () => {
     const runner = createShareRunner(onResult, () => Promise.resolve('shared'))
     await runner.run(payload())
     expect(onResult).toHaveBeenCalledWith('shared')
+  })
+})
+
+// =====================================================================
+// COACH-9: the club link payload contract
+// =====================================================================
+//
+// What leaves the app when a coach shares a session inside the club is pinned
+// here as a shape, not as a screen: exactly three strings, the canonical
+// protected URL and the coach's own title twice. The screen half (the button
+// is offered to a coach on the session day surface and to no parent) is
+// src/routes/sessionShare.screens.test.tsx.
+describe('COACH-9: the club link payload', () => {
+  it('is exactly a url, a title and a text, and nothing else', () => {
+    const p = clubLinkPayload('session', 's1', 'Titans Saturday', ORIGIN)
+    expect(Object.keys(p).sort()).toEqual(['text', 'title', 'url'])
+    expect(p).toEqual({ url: `${ORIGIN}/session-day/s1`, title: 'Titans Saturday', text: 'Titans Saturday' })
+  })
+
+  it('carries the canonical protected session route with no query, fragment or secret', () => {
+    const p = clubLinkPayload('session', 's1', 'Titans Saturday', ORIGIN)
+    expect(p.url).toBe(canonicalUrl('session', 's1', ORIGIN))
+    expect(p.url).not.toContain('?')
+    expect(p.url).not.toContain('#')
+    expect(p.url).not.toContain('/share/')
+    expect(p.url).not.toContain('token')
+  })
+
+  it('takes only an id and a title, so no player, bib, group, game or Spond fact can be in it', () => {
+    // The payload is a function of three strings. There is no parameter a
+    // register row, a group, a bib colour, a games plan or a Spond reply could
+    // arrive through, and no field they could occupy.
+    expect(clubLinkPayload.length).toBe(3)
+    const p = clubLinkPayload('session', 's1', 'Titans Saturday', ORIGIN)
+    const flat = JSON.stringify(p).toLowerCase()
+    for (const word of ['player', 'bib', 'group', 'game', 'spond', 'rsvp', 'present', 'venue', 'date', 'time']) {
+      expect(flat, word).not.toContain(word)
+    }
+  })
+
+  it('passes the coach’s title through untouched, as both the sheet title and its text', () => {
+    const p = clubLinkPayload('drill', 'd1', 'Rondo 4v1', ORIGIN)
+    expect(p.title).toBe('Rondo 4v1')
+    expect(p.text).toBe('Rondo 4v1')
+  })
+
+  it('defaults the origin to the page the coach is on, so a preview link stays a preview link', () => {
+    // No window under test, so the origin is empty and the URL is the path.
+    expect(clubLinkPayload('programme', 'p1', 'Playing out').url).toBe('/programmes/p1')
   })
 })
