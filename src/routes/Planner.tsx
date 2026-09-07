@@ -13,6 +13,7 @@ import {
   useMyCapabilities,
   useSession,
   useTeams,
+  useClub,
   useVenues,
 } from '../lib/queries'
 import { ActivityStructureSummary } from '../components/ActivityRoleControls'
@@ -20,6 +21,7 @@ import { type ActivityRole, applyRole, setNotRunning } from '../lib/activityRole
 import { blankSession, embedSrc, isSampleMedia, sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
 import type { Venue } from '../lib/venues'
+import { ageGroupOptions } from '../lib/ageGroups'
 import { newSessionCoverage, soleCoveredTeamId, toggleCoveredTeam } from '../lib/sessionTeams'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
@@ -357,6 +359,7 @@ export function SessionFieldsView({
   teams,
   venues,
   venuesUnavailable,
+  ageGroups,
   attachedBoardName,
   onField,
   onIntentions,
@@ -370,6 +373,10 @@ export function SessionFieldsView({
   readOnly: boolean
   busy: boolean
   teams: Team[]
+  // The club's age group list (0053), or undefined while the club read has
+  // not answered: the control then offers the standard defaults, and always
+  // the session's own current label (src/lib/ageGroups.ts).
+  ageGroups?: readonly string[]
   venues: Venue[]
   // True when the venue list could not be read. "We could not load the
   // venues" must not render as "your club has none".
@@ -425,7 +432,7 @@ export function SessionFieldsView({
         <div className="field" style={{ flex: 1 }}>
           <label>Age group</label>
           <select value={session.ageGroup} disabled={frozen} onChange={(e) => onField('ageGroup', e.target.value)}>
-            {['U6s', 'U7s', 'U8s', 'U9s', 'U10s', 'U11s', 'U12s'].map((a) => (
+            {ageGroupOptions(ageGroups, session.ageGroup).map((a) => (
               <option key={a}>{a}</option>
             ))}
           </select>
@@ -590,6 +597,7 @@ function PlannerEditor({
   const { data: teams = [] } = useTeams()
   const venuesQuery = useVenues()
   const venues = venuesQuery.data ?? []
+  const { data: club } = useClub()
   const { data: boards = [] } = useBoards()
   const memberById = useMemberMap()
   // The lookups only this host can resolve for the shared editor's rows.
@@ -956,6 +964,7 @@ function PlannerEditor({
             teams={teams}
             venues={venues}
             venuesUnavailable={venuesQuery.isError}
+            ageGroups={club?.ageGroups}
             attachedBoardName={attachedBoard?.name}
             onField={setField}
             onIntentions={setIntentions}

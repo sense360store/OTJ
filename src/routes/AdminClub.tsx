@@ -7,7 +7,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CREST_TYPES, useClearCrest, useClub, useMyCapabilities, useUpdateClub, useUploadCrest } from '../lib/queries'
 import { useClubBranding } from '../hooks/useClubBranding'
 import type { Club } from '../lib/data'
+import { AGE_GROUP_MAX_LENGTH, ageGroupProblem, normaliseAgeGroups, trimAgeGroup } from '../lib/ageGroups'
 import { Icon } from '../components/icons'
+import { Button, Card, IconButton, Note, TextField } from '../components/primitives'
 import { ErrorNote, Loading } from '../components/ui'
 
 type Note = { kind: 'ok' | 'error'; text: string } | null
@@ -202,6 +204,110 @@ function CrestCard({ club }: { club: Club }) {
   )
 }
 
+export const AGE_GROUPS_INTRO =
+  'The age groups the club runs, as the labels a coach picks for a session and an admin files a venue layout under. Until the list is set, sessions offer the standard U6s to U12s labels; a venue layout needs the list.'
+
+// The club's age group vocabulary (0053): the one list the session age group
+// control and the venue layout admin read. A local draft, saved whole; the
+// readback decides whether it is saved, field for field.
+export function AgeGroupsCard({ club }: { club: Club }) {
+  const update = useUpdateClub()
+  const [draft, setDraft] = useState<string[]>(club.ageGroups)
+  const [entry, setEntry] = useState('')
+  const [entryError, setEntryError] = useState<string | null>(null)
+  const [note, setNote] = useState<Note>(null)
+  const stored = club.ageGroups
+  const changed = draft.join('\u0000') !== stored.join('\u0000')
+
+  const add = () => {
+    const problem = ageGroupProblem(entry, draft)
+    if (problem) {
+      setEntryError(problem)
+      return
+    }
+    setEntryError(null)
+    setNote(null)
+    setDraft([...draft, trimAgeGroup(entry)])
+    setEntry('')
+  }
+
+  const save = () => {
+    setNote(null)
+    const sending = normaliseAgeGroups(draft)
+    update.mutate(
+      { id: club.id, ageGroups: sending },
+      {
+        onSuccess: (readback) => {
+          const held = readback?.ageGroups ?? null
+          if (held && held.join('\u0000') === sending.join('\u0000')) {
+            setDraft(held)
+            setNote({ kind: 'ok', text: 'Saved. Sessions and venue layouts read this list now.' })
+          } else {
+            setNote({ kind: 'error', text: 'The list came back different from what was sent, so it is not saved as shown.' })
+          }
+        },
+        onError: (e) => setNote({ kind: 'error', text: e.message }),
+      },
+    )
+  }
+
+  return (
+    <Card padded className="admin-stack-card">
+      <h3>Age groups</h3>
+      <p className="admin-intro">{AGE_GROUPS_INTRO}</p>
+      {draft.length === 0 ? (
+        <p className="admin-hint">No age groups yet. Add the first one below.</p>
+      ) : (
+        <ul className="age-group-list" aria-label="Age groups">
+          {draft.map((label) => (
+            <li key={label} className="age-group-item">
+              {label}
+              <IconButton
+                label={`Remove ${label}`}
+                icon={Icon.x}
+                disabled={update.isPending}
+                onClick={() => {
+                  setNote(null)
+                  setDraft(draft.filter((g) => g !== label))
+                }}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="admin-add">
+        <TextField
+          label="New age group"
+          className="field-flush admin-field-grow"
+          placeholder="e.g. U8s"
+          value={entry}
+          maxLength={AGE_GROUP_MAX_LENGTH}
+          error={entryError}
+          onChange={(e) => {
+            setEntry(e.target.value)
+            if (entryError) setEntryError(null)
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), add())}
+        />
+        <Button icon={Icon.plus} disabled={update.isPending} onClick={add}>
+          Add
+        </Button>
+      </div>
+      <div className="venue-layout-acts">
+        <Button variant="primary" icon={Icon.check} disabled={!changed || update.isPending} onClick={save}>
+          {update.isPending ? 'Saving…' : 'Save age groups'}
+        </Button>
+        {changed && !update.isPending && <span className="admin-hint">Not saved yet.</span>}
+      </div>
+      {note && (
+        <Note tone={note.kind === 'ok' ? 'success' : 'danger'} role={note.kind === 'ok' ? 'status' : 'alert'} className="admin-note">
+          {note.text}
+        </Note>
+      )}
+    </Card>
+  )
+}
+
 export function AdminClub() {
   const { caps } = useMyCapabilities()
   const { data: club, isLoading, isError } = useClub()
@@ -216,11 +322,12 @@ export function AdminClub() {
       <div className="page-head">
         <div>
           <h1>Club</h1>
-          <div className="sub">The club's name, motto and crest, shown across the app and on the sign in screen.</div>
+          <div className="sub">The club's name, motto, crest and age groups, shown across the app and on the sign in screen.</div>
         </div>
       </div>
       <IdentityCard club={club} />
       <CrestCard club={club} />
+      <AgeGroupsCard club={club} />
     </div>
   )
 }

@@ -34,6 +34,7 @@ import { AdminClub } from './routes/AdminClub'
 import { AdminUsers } from './routes/AdminUsers'
 import { AdminTeams } from './routes/AdminTeams'
 import { AdminVenues } from './routes/AdminVenues'
+import { AdminVenueLayouts } from './routes/AdminVenueLayouts'
 import { AdminSeasons } from './routes/AdminSeasons'
 import { AdminSpond } from './routes/AdminSpond'
 import { AdminShares } from './routes/AdminShares'
@@ -178,6 +179,11 @@ export function App() {
           <Route element={<RequireCap cap="club.manage" />}>
             <Route path="admin/club" element={<AdminClub />} />
             <Route path="admin/venues" element={<AdminVenues />} />
+            {/* One venue's layouts (COACH-5): where the stations and the games
+                go, per season and age group. Nested under the venue rather
+                than a nav item of its own, because it is reached from the
+                venue's row. */}
+            <Route path="admin/venues/:venueId/layouts" element={<AdminVenueLayouts />} />
             <Route path="admin/spond" element={<AdminSpond />} />
           </Route>
           <Route element={<RequireCap cap="teams.manage" />}>

@@ -86,6 +86,16 @@ import { type EventKindContext, spondEventLookup } from './eventKind'
 import { diagramSignature, parseDrillDiagram, serializeDrillDiagram, type DrillDiagram } from './drillDiagram'
 import { countLinkedResponses, tonightUpsertBatches, type ResponseCounts, type TonightChange } from './tonight'
 import type { Venue } from './venues'
+import { normaliseAgeGroups } from './ageGroups'
+import {
+  isLayoutShape,
+  parseVenueLayoutZones,
+  serialiseVenueLayoutZones,
+  type LayoutKind,
+  type LayoutShape,
+  type VenueLayout,
+  type VenueLayoutZones,
+} from './venueLayout'
 import type { RegisterEntry } from './register'
 import { buildRsvpByPlayer } from './spondRsvp'
 import { isSpondMemberId } from './spondLinking'
@@ -285,6 +295,7 @@ interface ClubRow {
   name: string
   motto: string | null
   crest_url: string | null
+  age_groups: string[] | null
 }
 
 // ---- Column lists ------------------------------------------------------
@@ -311,7 +322,7 @@ const TEAM_COLS = 'id, club_id, name, bib_colour, created_at, sort_order'
 const PROFILE_COLS =
   'id, full_name, avatar, avatar_url, role, team_id, all_teams, created_at, member_roles(roles(id, key, label, system)), member_teams(team_id)'
 const ROLE_COLS = 'id, club_id, key, label, system'
-const CLUB_COLS = 'id, name, motto, crest_url'
+const CLUB_COLS = 'id, name, motto, crest_url, age_groups'
 
 // ---- Mappers -----------------------------------------------------------
 
@@ -587,7 +598,15 @@ function toMember(r: ProfileRow): Member {
 }
 
 function toClub(r: ClubRow): Club {
-  return { id: r.id, name: r.name, motto: r.motto ?? '', crestUrl: r.crest_url }
+  return {
+    id: r.id,
+    name: r.name,
+    motto: r.motto ?? '',
+    crestUrl: r.crest_url,
+    // Rebuilt through the same rule the write applies, so a stored list and
+    // a list about to be stored compare equal field for field.
+    ageGroups: normaliseAgeGroups(Array.isArray(r.age_groups) ? r.age_groups : []),
+  }
 }
 
 // ---- Reads -------------------------------------------------------------
@@ -3384,15 +3403,23 @@ export function useRemoveAvatar() {
 // external value) is left alone by the cleanup, which only removes bucket
 // objects.
 
+// ageGroups (0053) is the club's canonical age group list. It is sent
+// normalised (trimmed, distinct, bounded, src/lib/ageGroups.ts), which is the
+// shape clubs_age_groups_valid accepts, and the readback is returned so the
+// screen can compare what the row holds with what it sent rather than trust
+// a request that returned.
 export function useUpdateClub() {
   const qc = useQueryClient()
-  return useMutation<void, Error, { id: string; name?: string; motto?: string }>({
-    mutationFn: async ({ id, name, motto }) => {
+  return useMutation<Club | null, Error, { id: string; name?: string; motto?: string; ageGroups?: readonly string[] }>({
+    mutationFn: async ({ id, name, motto, ageGroups }) => {
       const patch: Record<string, unknown> = {}
       if (name !== undefined) patch.name = name
       if (motto !== undefined) patch.motto = motto || null
-      const { error } = await supabase.from('clubs').update(patch).eq('id', id)
+      if (ageGroups !== undefined) patch.age_groups = normaliseAgeGroups(ageGroups)
+      const { data, error } = await supabase.from('clubs').update(patch).eq('id', id).select(CLUB_COLS)
       if (error) throw error
+      const row = (data as ClubRow[])[0]
+      return row ? toClub(row) : null
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['club'] }),
   })
@@ -5592,6 +5619,128 @@ export function useDeleteVenue() {
       qc.invalidateQueries({ queryKey: ['venues'] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
+  })
+}
+
+// ---- Venue layouts (club.manage) -------------------------------------------
+// Where the stations and the games go at one venue, for one season and one
+// age group (0053, COACH-5). Reads are club wide, because a coach needs to
+// see where the stations go and a layout names no child; writes are the
+// admin surface. The shape is read and written by src/lib/venueLayout.ts
+// alone, field by field, and the database restates its allow list as a
+// check constraint, so nothing outside the shape can reach the row from
+// here or from anywhere else.
+
+interface VenueLayoutRow {
+  id: string
+  club_id: string
+  venue_id: string
+  season_id: string
+  age_group: string
+  kind: string
+  slots: number
+  zones: unknown
+  created_at: string
+}
+
+const VENUE_LAYOUT_COLS = 'id, club_id, venue_id, season_id, age_group, kind, slots, zones, created_at'
+
+// The row as the screens consume it. A kind or a slot count outside the
+// vocabulary cannot be stored (venue_layouts_kind_valid,
+// venue_layouts_slots_valid), so a row that reads as one is treated as
+// unreadable rather than drawn as something it is not.
+function toVenueLayout(r: VenueLayoutRow): VenueLayout {
+  const kind: LayoutKind = r.kind === 'games' ? 'games' : 'stations'
+  const readable = (r.kind === 'stations' || r.kind === 'games') && isLayoutShape(kind, r.slots)
+  return {
+    id: r.id,
+    venueId: r.venue_id,
+    seasonId: r.season_id,
+    ageGroup: r.age_group,
+    kind,
+    slots: r.slots,
+    zones: readable ? parseVenueLayoutZones(r.zones, r.slots) : null,
+  }
+}
+
+// Every layout the club holds. A dozen rows per venue per season, so one
+// read serves the admin screen and every session that resolves a layout.
+export function useVenueLayouts(enabled = true) {
+  return useQuery({
+    queryKey: ['venue_layouts'],
+    enabled,
+    queryFn: async (): Promise<VenueLayout[]> => {
+      const { data, error } = await supabase
+        .from('venue_layouts')
+        .select(VENUE_LAYOUT_COLS)
+        .order('created_at', { ascending: true })
+      if (error) throw error
+      return (data as unknown as VenueLayoutRow[]).map(toVenueLayout)
+    },
+  })
+}
+
+// What a save sends: the scope, the shape and the zones. `id` names the row
+// to redraw; without it the layout is new. The scope is the unique key, so a
+// second admin drawing the same shape in the same scope at the same moment
+// is refused by venue_layouts_scope_unique rather than silently winning, and
+// the screen reports it as a layout somebody else drew.
+export interface SaveVenueLayoutInput {
+  id?: string
+  venueId: string
+  seasonId: string
+  ageGroup: string
+  shape: LayoutShape
+  zones: VenueLayoutZones
+}
+
+export function isVenueLayoutScopeTaken(error: unknown): boolean {
+  const e = error as { code?: string; message?: string } | null
+  return !!e && (e.code === '23505' || /venue_layouts_scope_unique/.test(e.message ?? ''))
+}
+
+// Returns the authoritative readback, so the screen compares what the row
+// holds with what it drew and says Saved only when the two agree.
+export function useSaveVenueLayout() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<VenueLayout, Error, SaveVenueLayoutInput>({
+    mutationFn: async (input) => {
+      if (!profile?.club_id) throw new Error('You must be signed in to draw a layout.')
+      const zones = serialiseVenueLayoutZones(input.zones, input.shape)
+      const query = input.id
+        ? supabase.from('venue_layouts').update({ zones }).eq('id', input.id)
+        : supabase.from('venue_layouts').insert({
+            club_id: profile.club_id,
+            venue_id: input.venueId,
+            season_id: input.seasonId,
+            age_group: input.ageGroup,
+            kind: input.shape.kind,
+            slots: input.shape.slots,
+            zones,
+          })
+      const { data, error } = await query.select(VENUE_LAYOUT_COLS)
+      if (error) throw error
+      const row = (data as unknown as VenueLayoutRow[])[0]
+      // Zero rows back from an update is a refusal the policies expressed as
+      // silence (the row is not this club's, or the caller lost club.manage);
+      // it is not a save.
+      if (!row) throw new Error('The layout was not saved. It may have been removed, or you may not hold club.manage.')
+      return toVenueLayout(row)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['venue_layouts'] }),
+  })
+}
+
+export function useDeleteVenueLayout() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, string>({
+    mutationFn: async (id) => {
+      const { data, error } = await supabase.from('venue_layouts').delete().eq('id', id).select('id')
+      if (error) throw error
+      if (!data || data.length === 0) throw new Error('The layout was not removed. It may already be gone, or you may not hold club.manage.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['venue_layouts'] }),
   })
 }
 

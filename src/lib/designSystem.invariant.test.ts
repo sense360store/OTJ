@@ -75,6 +75,12 @@ const OWNED_FILES = [
   // their two stylesheets off the scale; neither writes an inline style now.
   'routes/Home.tsx',
   'routes/ParentHome.tsx',
+  // VISUAL-03 with COACH-5: the Venues admin screen, adopted with the
+  // Layouts affordance that reached its rows, the per venue Layouts screen
+  // and the drawing they share. None of the three writes an inline style.
+  'routes/AdminVenues.tsx',
+  'routes/AdminVenueLayouts.tsx',
+  'components/VenueLayoutPitch.tsx',
 ]
 
 
@@ -471,6 +477,11 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
     'routes/ParentHome.tsx',
     'routes/Home.css',
     'routes/ParentHome.css',
+    // VISUAL-03 with COACH-5: the same three files, for the same reason.
+    // Their layout rules are in the shared stylesheet.
+    'routes/AdminVenues.tsx',
+    'routes/AdminVenueLayouts.tsx',
+    'components/VenueLayoutPitch.tsx',
   ]
 
   it('writes no inline margin, padding or gap outside the spacing scale', () => {
@@ -530,6 +541,9 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
       'routes/ParentHome.tsx',
       'routes/Home.css',
       'routes/ParentHome.css',
+      'routes/AdminVenues.tsx',
+      'routes/AdminVenueLayouts.tsx',
+      'components/VenueLayoutPitch.tsx',
     ]) {
       expect(SPACING_OWNED, `${f} is covered`).toContain(f)
       expect(sourceFiles.map(rel), `${f} exists`).toContain(f)

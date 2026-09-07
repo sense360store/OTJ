@@ -220,6 +220,12 @@ export const WRITE_NAMES = [
   'deleteTeam',
   'setTeamBib',
   'saveTeamOrder',
+  // COACH-5: the venue admin and the layouts screen.
+  'insertVenue',
+  'renameVenue',
+  'deleteVenue',
+  'saveVenueLayout',
+  'deleteVenueLayout',
 ]
 
 export const calls = (name, want) => (page) =>
@@ -1831,9 +1837,138 @@ export const ADMIN_ROLES_MATRIX = [
   },
 ]
 
+/* ---- Venues and venue layouts (VISUAL-03 with COACH-5) ------------------
+   The fixture names, by hand, scoped by name as the teams are. */
+const VENUES = { first: 'Riverside Fields', second: 'Mill Lane Academy' }
+export const venueRow = (page, name) =>
+  page.locator('.admin-row').filter({ has: page.getByRole('button', { name: `Remove ${name}`, exact: true }) })
+
+export const VENUE_FLOWS = [
+  {
+    key: 'venues-default',
+    screen: 'adminvenues',
+    note: 'the screen as it opens: two venues, each with a rename control and a Layouts link named for its own ground, and nothing written',
+    proof: async (page) =>
+      (await page.locator('.admin-row').count()) === 2 &&
+      (await venueRow(page, VENUES.first).locator('input').inputValue()) === VENUES.first &&
+      (await page.getByRole('link', { name: `Layouts for ${VENUES.first}`, exact: true }).count()) === 1 &&
+      (await page.getByRole('link', { name: `Layouts for ${VENUES.second}`, exact: true }).count()) === 1 &&
+      (await page.getByRole('button', { name: `Rename ${VENUES.first}`, exact: true }).isDisabled()) &&
+      (await noWrites(page)),
+  },
+  {
+    key: 'venues-empty',
+    screen: 'adminvenues',
+    state: 'novenues',
+    note: 'a club with no venues: the empty state says what to do next rather than showing a bare list',
+    proof: async (page) =>
+      (await page.locator('.empty h3').filter({ hasText: 'No venues yet' }).count()) === 1 &&
+      (await page.locator('.admin-row').count()) === 0,
+  },
+  {
+    key: 'venues-error',
+    screen: 'adminvenues',
+    state: 'adminerror',
+    note: 'the venues read failed: the danger state with its retry, announced as an alert, never an empty club',
+    proof: async (page) =>
+      (await page.locator('.state-error[role="alert"]').count()) === 1 &&
+      (await page.locator('.state-error').getByRole('button', { name: 'Retry' }).count()) === 1 &&
+      (await page.locator('.empty').count()) === 0,
+  },
+  {
+    key: 'venues-remove-open',
+    screen: 'adminvenues',
+    note: 'Remove pressed on a venue: the destructive dialog says the sessions survive, unplaced, and that the layouts go with the venue',
+    drive: (page) => click(page.getByRole('button', { name: `Remove ${VENUES.first}`, exact: true })),
+    proof: async (page) =>
+      (await page.getByRole('dialog').filter({ hasText: 'Remove venue' }).count()) === 1 &&
+      (await page.getByRole('dialog').getByText('its layouts').count()) === 1 &&
+      (await page.getByRole('dialog').locator('.btn-danger').filter({ hasText: 'Remove' }).count()) === 1,
+    overlay: true,
+  },
+  {
+    key: 'layouts-default',
+    screen: 'adminvenuelayouts',
+    note: 'one venue s layouts as the screen opens: the current season and the first age group chosen, one of four shapes drawn as a numbered drawing, the other three not drawn yet, and nothing written',
+    proof: async (page) =>
+      (await page.getByRole('heading', { level: 1 }).filter({ hasText: `Layouts at ${VENUES.first}` }).count()) === 1 &&
+      (await page.locator('.venue-layout-card').count()) === 4 &&
+      (await page.locator('svg[role="img"]').count()) === 1 &&
+      (await page.locator('svg[role="img"] .venue-zone-badge').count()) === 5 &&
+      (await page.getByText('Not drawn yet for this season and age group').count()) === 3 &&
+      (await page.getByText('1 of 4 drawn').count()) === 1 &&
+      (await page.getByRole('button', { name: 'Edit Five stations', exact: true }).count()) === 1 &&
+      (await page.getByRole('button', { name: 'Draw Four stations', exact: true }).count()) === 1 &&
+      (await noWrites(page)),
+  },
+  {
+    key: 'layouts-drawing',
+    screen: 'adminvenuelayouts',
+    note: 'Draw pressed on a shape nobody has drawn: the editor opens on the default arrangement with four focusable numbered zones, the scope controls freeze, and nothing is written until Save',
+    drive: (page) => click(page.getByRole('button', { name: 'Draw Four stations', exact: true })),
+    proof: async (page) =>
+      (await page.locator('svg[role="group"]').count()) === 1 &&
+      (await page.locator('svg[role="group"] .venue-zone-editable[tabindex="0"]').count()) === 4 &&
+      (await page.getByRole('button', { name: 'Save Four stations', exact: true }).count()) === 1 &&
+      (await page.getByRole('button', { name: 'Cancel drawing Four stations', exact: true }).count()) === 1 &&
+      (await page.getByLabel('Season').isDisabled()) &&
+      (await page.getByLabel('Age group').isDisabled()) &&
+      (await page.getByLabel('Name for Station 1', { exact: true }).count()) === 1 &&
+      (await noWrites(page)),
+  },
+  {
+    key: 'layouts-moved-by-keyboard',
+    screen: 'adminvenuelayouts',
+    note: 'a zone moved with the keyboard: the first zone of a fresh drawing focused and nudged right, the change announced in words, and still nothing written',
+    drive: async (page) => {
+      if (!(await click(page.getByRole('button', { name: 'Draw Two games', exact: true })))) return false
+      const zone = page.locator('svg[role="group"] .venue-zone-editable').first()
+      if ((await zone.count()) === 0) return false
+      await zone.focus()
+      await page.keyboard.press('ArrowRight')
+      await page.keyboard.press('ArrowRight')
+      return true
+    },
+    proof: async (page) =>
+      (await page.locator('.sr-only[aria-live="polite"]').filter({ hasText: 'Game 1, 4% across' }).count()) === 1 &&
+      (await noWrites(page)),
+  },
+  {
+    key: 'layouts-remove-open',
+    screen: 'adminvenuelayouts',
+    note: 'Remove pressed on a drawn layout: the destructive dialog names the shape and the ground and says nothing else changes',
+    drive: (page) => click(page.getByRole('button', { name: 'Remove Five stations', exact: true })),
+    proof: async (page) =>
+      (await page.getByRole('dialog').filter({ hasText: 'Remove layout' }).count()) === 1 &&
+      (await page.getByRole('dialog').getByText(`Five stations at ${VENUES.first}`).count()) === 1 &&
+      (await page.getByRole('dialog').locator('.btn-danger').filter({ hasText: 'Remove' }).count()) === 1,
+    overlay: true,
+  },
+  {
+    key: 'layouts-none-drawn',
+    screen: 'adminvenuelayouts',
+    state: 'nolayouts',
+    note: 'a ground nothing has been drawn for: four shapes, four Draw controls, none of four drawn',
+    proof: async (page) =>
+      (await page.locator('svg[role="img"]').count()) === 0 &&
+      (await page.getByRole('button', { name: /^Draw /, exact: false }).count()) === 4 &&
+      (await page.getByText('0 of 4 drawn').count()) === 1,
+  },
+  {
+    key: 'layouts-no-age-groups',
+    screen: 'adminvenuelayouts',
+    state: 'noagegroups',
+    note: 'a club with no age group list: the layouts screen offers no card and points at the Club screen, because a layout is filed under an age group',
+    proof: async (page) =>
+      (await page.locator('.venue-layout-card').count()) === 0 &&
+      (await page.locator('.note-warning[role="status"]').filter({ hasText: 'no age groups yet' }).count()) === 1 &&
+      (await page.getByRole('link', { name: 'Open Club', exact: true }).count()) === 1,
+  },
+]
+
 // Every entry the tools drive, in one list, so a tool cannot cover the flows
 // and quietly skip the capability matrix.
-export const ADMIN_ENTRIES = [...USER_FLOWS, ...TEAM_FLOWS, ...ADMIN_ROLES_MATRIX]
+export const ADMIN_ENTRIES = [...USER_FLOWS, ...TEAM_FLOWS, ...VENUE_FLOWS, ...ADMIN_ROLES_MATRIX]
 
 // The query string an admin entry's page opens on. The default capability set
 // is the users.manage holder, because it is the only one either screen fully

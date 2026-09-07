@@ -21,6 +21,8 @@ import type {
   Team,
   Template,
 } from '../../src/lib/data'
+import type { Venue } from '../../src/lib/venues'
+import type { VenueLayout } from '../../src/lib/venueLayout'
 
 const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
 
@@ -354,6 +356,16 @@ export type HarnessState =
   // A parent the club has not put on a team yet: the info Note above club
   // wide content. Read by the team scope, so it moves nothing for a coach.
   | 'noteam'
+  /* ---- Admin Venues and Venue Layouts (VISUAL-03 with COACH-5) ---------
+     The venues read answers with rows only while one of these two screens
+     is mounted, so Home's venue pill and the planner's picker keep reading
+     what they always read. `novenues` is the club that has added none;
+     `nolayouts` a venue nothing has been drawn for; `noagegroups` the club
+     that has not configured its age group list, which is the state the
+     layouts screen points at the Club screen from. */
+  | 'novenues'
+  | 'nolayouts'
+  | 'noagegroups'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -1787,3 +1799,35 @@ export const adminStore = {
     adminChanged()
   },
 }
+
+/* ---- Admin Venues and Venue Layouts (VISUAL-03 with COACH-5) -----------
+   Two invented grounds, the club's age group list, and one five station
+   layout drawn for the first ground in the current season for the first age
+   group. The other three shapes are deliberately undrawn, so the screen
+   shows a drawing and a "not drawn yet" side by side. */
+export const ADMIN_VENUES: Venue[] = [
+  { id: 'venue-riverside', name: 'Riverside Fields' },
+  { id: 'venue-mill', name: 'Mill Lane Academy' },
+]
+export const ADMIN_AGE_GROUPS = ['U7s', 'U8s', 'U9s']
+export const ADMIN_LAYOUTS: VenueLayout[] = [
+  {
+    id: 'layout-riverside-five',
+    venueId: ADMIN_VENUES[0].id,
+    seasonId: CURRENT_SEASON.id,
+    ageGroup: ADMIN_AGE_GROUPS[0],
+    kind: 'stations',
+    slots: 5,
+    zones: {
+      version: 1,
+      size: { metresWide: 60, metresLong: 40 },
+      zones: [
+        { n: 1, name: 'Top corner', x: 0.02, y: 0.02, w: 0.3, h: 0.45 },
+        { n: 2, name: '', x: 0.35, y: 0.02, w: 0.3, h: 0.45 },
+        { n: 3, name: '', x: 0.68, y: 0.02, w: 0.3, h: 0.45 },
+        { n: 4, name: 'By the road', x: 0.02, y: 0.53, w: 0.45, h: 0.45 },
+        { n: 5, name: '', x: 0.53, y: 0.53, w: 0.45, h: 0.45 },
+      ],
+    },
+  },
+]

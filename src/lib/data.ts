@@ -222,11 +222,14 @@ export function hasAllCaps(caps: ReadonlySet<string>, needed: readonly string[])
 }
 
 // The club row. crestUrl is a storage path in the media bucket or a full URL.
+// ageGroups is the club's canonical age group vocabulary (0053), empty until
+// an admin configures it; src/lib/ageGroups.ts holds the rules.
 export interface Club {
   id: string
   name: string
   motto: string
   crestUrl: string | null
+  ageGroups: string[]
 }
 
 export interface CornerInfo {

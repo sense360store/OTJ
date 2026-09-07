@@ -7,7 +7,10 @@ export * from '../../../src/lib/queries'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 
 import {
+  ADMIN_AGE_GROUPS,
+  ADMIN_LAYOUTS,
   ADMIN_SHARE_COUNTS,
+  ADMIN_VENUES,
   adminStore,
   harnessScreen,
   ACCOUNT_CLUB_NAME,
@@ -45,6 +48,8 @@ import {
 } from '../fixtures'
 import type { ActivityFilters } from '../../../src/lib/activityView'
 import type { Capability, Member, RoleCapability, RoleInfo, Team } from '../../../src/lib/data'
+import type { Venue } from '../../../src/lib/venues'
+import type { VenueLayout } from '../../../src/lib/venueLayout'
 
 const query = <T,>(data: T, over: Record<string, unknown> = {}) => ({
   data,
@@ -154,7 +159,44 @@ export const useMyTeams = () =>
       ? { teamIds: [] as string[], allTeams: false }
       : { teamIds: TEAMS.map((t) => t.id), allTeams: true },
   )
-export const useVenues = () => query([])
+/* The venues read answers with rows on the two venue admin screens only, so
+   Home's venue pill and every picker keep reading what they always read. */
+const ON_VENUE_ADMIN = harnessScreen === 'adminvenues' || harnessScreen === 'adminvenuelayouts'
+export const useVenues = () => {
+  if (!ON_VENUE_ADMIN) return query([])
+  if (fixtures.state === 'adminloading') return pendingQuery<Venue[]>()
+  if (fixtures.state === 'adminerror') return failedQuery<Venue[]>()
+  return query(fixtures.state === 'novenues' ? [] : ADMIN_VENUES)
+}
+/* Counted, as every admin write is, so an entry can prove nothing was
+   written. The stubs share the write phases: `inflight` hangs, `writefails`
+   refuses, everything else settles at once. */
+const countedWrite = (name: 'insertVenue' | 'renameVenue' | 'deleteVenue' | 'saveVenueLayout' | 'deleteVenueLayout') => () => {
+  const base = writeMutation()
+  return {
+    ...base,
+    mutate: (vars: unknown, opts?: { onSuccess?: (data: unknown) => void; onError?: (e: Error) => void }) => {
+      adminCalls[name] += 1
+      adminCalls.writes.push({ name, vars })
+      if (fixtures.state === 'inflight') return
+      if (fixtures.state === 'writefails') {
+        opts?.onError?.(new Error('the write was refused'))
+        return
+      }
+      opts?.onSuccess?.(undefined)
+    },
+  }
+}
+export const useInsertVenue = countedWrite('insertVenue')
+export const useRenameVenue = countedWrite('renameVenue')
+export const useDeleteVenue = countedWrite('deleteVenue')
+/* COACH-5. The club's layouts, read once for the whole club; the save and
+   the removal share the write stub, so `inflight` and `writefails` reach
+   the layouts screen the way they reach every dialog. */
+export const useVenueLayouts = () =>
+  query(fixtures.state === 'nolayouts' ? ([] as VenueLayout[]) : ADMIN_LAYOUTS, { dataUpdatedAt: 1 })
+export const useSaveVenueLayout = countedWrite('saveVenueLayout')
+export const useDeleteVenueLayout = countedWrite('deleteVenueLayout')
 // The venue is answered on Home only, so Sessions' venue pill, which reads
 // the same map, keeps rendering exactly what it always rendered: nothing.
 export const useVenueMap = () => homeRows(HOME_VENUES_FOR(fixtures.state)) ?? {}
@@ -180,7 +222,15 @@ export const useProfiles = () => {
   return query(members)
 }
 export const useClub = () =>
-  query({ name: ACCOUNT_CLUB_NAME, motto: 'Where football and friendships flourish', crestUrl: null })
+  query({
+    id: 'club-harness',
+    name: ACCOUNT_CLUB_NAME,
+    motto: 'Where football and friendships flourish',
+    crestUrl: null,
+    // COACH-5: the club's age group list, empty for the state that shows the
+    // layouts screen pointing at the Club screen.
+    ageGroups: fixtures.state === 'noagegroups' ? [] : ADMIN_AGE_GROUPS,
+  })
 /* ---- Registered players -------------------------------------------
    The register is the one surface whose state matrix a screenshot has to
    cover in full, so its reads answer from `state` rather than always
@@ -726,6 +776,11 @@ interface AdminCallLog {
   deleteTeam: number
   setTeamBib: number
   saveTeamOrder: number
+  insertVenue: number
+  renameVenue: number
+  deleteVenue: number
+  saveVenueLayout: number
+  deleteVenueLayout: number
   /* Every write MADE, in order, WITH ITS ARGUMENTS. A counter says a write
      happened and the order says when, and neither says what was sent: the
      member save could send `teamIds: []` while the row still read All teams,
@@ -750,6 +805,11 @@ const adminCalls: AdminCallLog = {
   deleteTeam: 0,
   setTeamBib: 0,
   saveTeamOrder: 0,
+  insertVenue: 0,
+  renameVenue: 0,
+  deleteVenue: 0,
+  saveVenueLayout: 0,
+  deleteVenueLayout: 0,
   writes: [],
 }
 ;(globalThis as unknown as { __adminCalls?: AdminCallLog }).__adminCalls = adminCalls

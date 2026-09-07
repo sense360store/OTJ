@@ -52,7 +52,7 @@ next**, as the first gated coaching migration.
 | COACH-2B | Coaching workflow | The authoring affordances: mark a station or the games phase, and a Not running tonight toggle on a dated session | **Done** | P1 | No migration. Shipped in #202. Gates COACH-6, COACH-7, COACH-8. |
 | COACH-3 | Coaching workflow | Suggested setup from confirmed attendance: station count, groups, unique colours, readiness | **Done** | P1 | No schema. Shipped in #203 (generator) and #204 (screen). Wants COACH-1 and degrades honestly without it, saying the order is unset. |
 | COACH-4 | Coaching workflow | Preserve the coach's setup when attendance changes | **Done** | P1 | No schema. Shipped in #206. |
-| COACH-5 | Coaching workflow | Venue layouts scoped to venue, season and age group: four and five station layouts, one and two game visuals, admin owned | Later | P1 | Migration M2, gated, and the largest review here. New table, new shape boundary. Independent. |
+| COACH-5 | Coaching workflow | Venue layouts scoped to venue, season and age group: four and five station layouts, one and two game visuals, admin owned | Built, migration awaiting apply | P1 | Migration M2, `0053_venue_layouts`, gated and registered against `20260904174142` / `atomic_team_order`. New table, new shape boundary, and `clubs.age_groups`. Independent. |
 | COACH-6 | Coaching workflow | The setup map on session day | Later | P1 | Depends on COACH-2 and COACH-5. |
 | COACH-7 | Coaching workflow | The full screen station detail, browsing only | Later | P1 | Depends on COACH-6. Pull the phone half of QUALITY-02 in here. |
 | COACH-8 | Coaching workflow | The game plan and a separate game bib | Later | P2 | Migration M3, gated. Depends on COACH-3, wants COACH-1 and COACH-5. |
