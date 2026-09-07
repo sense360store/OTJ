@@ -34,8 +34,11 @@ import {
   DRILL_DIAGRAM_VERSION,
   ELEMENT_TYPES,
   MAX_DIAGRAM_ELEMENTS,
+  MAX_GOAL_WIDTH,
   MAX_PLAYER_LABEL,
   MAX_TEXT_LENGTH,
+  MIN_GOAL_WIDTH,
+  MIN_ZONE_SIZE,
   ORIENTATIONS,
   SURFACE_KINDS,
   type DiagramElement,
@@ -67,6 +70,9 @@ export const PUBLIC_DIAGRAM_ELEMENT_KEYS: Record<DiagramElementType, readonly st
 const DIAGRAM_KEYS = new Set(['surface', 'elements'])
 const SURFACE_KEYS = new Set(['kind', 'orientation'])
 const FACINGS: readonly string[] = ['up', 'down', 'left', 'right']
+// Four place fractions add with binary error; a sum meant to be exactly one
+// can land a hair over it.
+const GEOMETRY_EPSILON = 1e-9
 // A lone surrogate, which the server never emits: refused so a half character
 // cannot reach an SVG text node. Kept in step with LONE_SURROGATE in share.ts.
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
@@ -118,6 +124,7 @@ export function validatePublicDiagram(value: unknown): value is PublicDrillDiagr
         break
       case 'goal':
         if (!isFraction(raw.x) || !isFraction(raw.y) || !isFraction(raw.width)) return false
+        if ((raw.width as number) < MIN_GOAL_WIDTH || (raw.width as number) > MAX_GOAL_WIDTH) return false
         if (!inVocab(FACINGS, raw.facing)) return false
         break
       case 'arrow':
@@ -126,6 +133,11 @@ export function validatePublicDiagram(value: unknown): value is PublicDrillDiagr
         break
       case 'zone':
         if (!isFraction(raw.x) || !isFraction(raw.y) || !isFraction(raw.w) || !isFraction(raw.h)) return false
+        // The projector's own geometry: a zone is at least the minimum size and
+        // sits wholly on the surface. Anything else was never emitted by it.
+        if ((raw.w as number) < MIN_ZONE_SIZE || (raw.h as number) < MIN_ZONE_SIZE) return false
+        if ((raw.x as number) + (raw.w as number) > 1 + GEOMETRY_EPSILON) return false
+        if ((raw.y as number) + (raw.h as number) > 1 + GEOMETRY_EPSILON) return false
         if (!inVocab(DIAGRAM_COLOURS, raw.colour)) return false
         break
       case 'text':

@@ -279,6 +279,16 @@ describe('an existing share gains a diagram only by being rebuilt', () => {
     }
   })
 
+  it('every session handler catches the builder’s stated refusal, so the size cap is a reason and never a 500', () => {
+    // SOURCE TEXT. The cap is measurable only after projection; preview,
+    // create and refresh each wrap the build and report the reason.
+    for (const name of ['handlePreviewSession', 'handleCreateSession', 'handleRefreshSession']) {
+      const body = fn(name)
+      expect(body, `${name} does not catch the builder`).toContain('sessionBuildReason(err)')
+      expect(body).toContain('buildSessionSnapshot(')
+    }
+  })
+
   it('rotate and revoke never rebuild: a new secret or a closed link does not republish content', () => {
     for (const name of ['handleRotate', 'handleRevoke']) {
       const body = fn(name)

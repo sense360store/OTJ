@@ -1359,7 +1359,9 @@ redeployed together (section 55.6).
   accept `null` and the exact public shape, and nothing wider or malformed:
   an element `id`, a stored `version`, an unknown element type, a key outside
   the type's set, an identity key, a non finite or off surface number, a label
-  or text over its cap, an unknown colour, facing, arrow or surface kind, an
+  or text over its cap, a lone surrogate, an unknown colour, facing, arrow or
+  surface kind, a goal width or zone size outside what the projection emits
+  (a zone must be at least the minimum size and sit wholly on the surface), an
   empty element list or one over the cap. A diagram that fails makes the
   WHOLE snapshot invalid: `read-content-share` answers the neutral
   unavailable response and the page renders the neutral state with no print
@@ -1401,16 +1403,18 @@ change being deployed**, and that is stated rather than worked around:
 
 A maximal diagram (sixty of the widest element) is under 6 KiB, and six of
 them in one session are under a quarter of the 256 KiB snapshot cap, both
-pinned in `share_test.ts`. The programme builder still refuses an oversized
-snapshot with a stated reason; a session over the cap is refused by the RPC
-as before (section 38a). Residual, measured by the adversarial review: the cap
-is now reachable by a session, at roughly forty two distinct drills each
-carrying a maximal diagram (the RPC measures jsonb text, about thirteen
-percent wider than compact JSON), and the session builder has no size check
-of its own, so such a coach gets the generic refusal and a refresh leaves the
-old copy serving. A real session holds six to eight activities. A shared size
-check across the three builders, measuring with the jsonb margin, is the
-follow up if it is ever reached.
+pinned in `share_test.ts`. The cap became reachable by a session with this
+change (roughly forty distinct drills each carrying a maximal diagram), and
+until now only the programme builder measured it; a session over it reached
+the lifecycle RPC's bare exception and the coach saw a generic failure. Both
+builders now measure their output with `jsonbTextBytes`, which counts the
+bytes the way `content_share_resolve_snapshot` does (`octet_length` of the
+jsonb text form, with its `", "` and `": "` separators, about thirteen
+percent wider than compact JSON), so a builder never passes what the RPC then
+refuses. A session over the cap is refused with `snapshot_too_large` on
+preview, create and refresh, worded for the coach like the programme case,
+and `evaluateSessionEligibility` is unchanged because the cap is measurable
+only after projection.
 
 ### 55.6 Deployment gate
 

@@ -18,12 +18,14 @@ import {
   anyRestricted,
   isFaSourceUrl,
   isPublicDrillDiagram,
+  jsonbTextBytes,
   MAX_DIAGRAM_ELEMENTS,
   MAX_DIAGRAM_LABEL,
   MAX_DIAGRAM_TEXT,
   MAX_SNAPSHOT_BYTES,
   projectDrillDiagram,
   rowProvenance,
+  SessionBuildError,
   buildShareListFilter,
   deriveShareStatus,
   SHARE_LIST_DEFAULT_LIMIT,
@@ -2261,6 +2263,68 @@ Deno.test('diagram: a maximal diagram is bounded in bytes, so a session of drawn
   )
   const total = new TextEncoder().encode(JSON.stringify(s)).length
   assert(total < MAX_SNAPSHOT_BYTES / 4, `six maximal diagrams took ${total} bytes`)
+})
+
+Deno.test('diagram: the validators refuse geometry the projector never emits', () => {
+  const good = projectDrillDiagram(storedDiagram())!
+  const withZone = (zone: Record<string, unknown>) => ({ surface: good.surface, elements: [{ type: 'zone', x: 0.1, y: 0.1, w: 0.4, h: 0.3, colour: 'yellow', ...zone }] })
+  const withGoal = (goal: Record<string, unknown>) => ({ surface: good.surface, elements: [{ type: 'goal', x: 0.5, y: 0.1, width: 0.24, facing: 'up', ...goal }] })
+  assert(isPublicDrillDiagram(withZone({})))
+  assert(isPublicDrillDiagram(withZone({ x: 0.6, w: 0.4 })), 'a zone ending exactly on the edge is on the surface')
+  assert(isPublicDrillDiagram(withZone({ x: 0.7, w: 0.3 })), 'binary error on a sum meant to be one is tolerated')
+  assert(!isPublicDrillDiagram(withZone({ x: 0.9, w: 0.5 })), 'a zone off the right edge')
+  assert(!isPublicDrillDiagram(withZone({ y: 0.9, h: 0.5 })), 'a zone off the bottom edge')
+  assert(!isPublicDrillDiagram(withZone({ w: 0 })), 'an invisible zone')
+  assert(!isPublicDrillDiagram(withZone({ h: 0.01 })), 'a zone under the minimum')
+  assert(isPublicDrillDiagram(withGoal({})))
+  assert(!isPublicDrillDiagram(withGoal({ width: 0.01 })), 'a goal narrower than the minimum')
+  assert(!isPublicDrillDiagram(withGoal({ width: 0.9 })), 'a goal wider than the maximum')
+  // And what the projector emits for the same raw values passes.
+  const projected = projectDrillDiagram(storedDiagram({
+    elements: [
+      { type: 'zone', id: 'z1', x: 0.9, y: 0.9, w: 0.5, h: 0, colour: 'red' },
+      { type: 'goal', id: 'g1', x: 0.5, y: 0.5, width: 9, facing: 'up' },
+    ],
+  }))
+  assert(isPublicDrillDiagram(projected))
+})
+
+Deno.test('jsonbTextBytes measures the form the lifecycle RPC measures, not compact JSON', () => {
+  // Postgres prints jsonb with ", " between members and ": " after each key.
+  const v = { a: [1, 2, { b: 'x' }], c: null, d: true, e: 0.5 }
+  assertEquals(jsonbTextBytes(v), new TextEncoder().encode('{"a": [1, 2, {"b": "x"}], "c": null, "d": true, "e": 0.5}').length)
+  assert(jsonbTextBytes(v) > JSON.stringify(v).length)
+  assertEquals(jsonbTextBytes([]), 2)
+  assertEquals(jsonbTextBytes({}), 2)
+  assertEquals(jsonbTextBytes('é'), 4)
+})
+
+Deno.test('a session over the snapshot cap is refused by the builder with the stated reason', () => {
+  const widest = Array.from({ length: MAX_DIAGRAM_ELEMENTS }, (_, i) => ({
+    type: 'arrow', id: `arrow-${i}`, x1: 0.1234, y1: 0.5678, x2: 0.9012, y2: 0.3456, arrow: 'dribble',
+  }))
+  const drills = Array.from({ length: 60 }, (_, i) => drill({
+    id: `${String(i).padStart(2, '0')}111111-1111-1111-1111-111111111111`,
+    club_id: CLUB,
+    diagram: storedDiagram({ elements: widest }),
+  }))
+  const over = session({ activities: drills.map((dr) => ({ phase: 'Skill', drill_id: dr.id, duration: 1 })) })
+  let caught: unknown = null
+  try {
+    buildSessionSnapshot(over, drills, [], null, AT)
+  } catch (err) {
+    caught = err
+  }
+  assert(caught instanceof SessionBuildError, 'the builder must refuse with a stated reason')
+  assertEquals((caught as SessionBuildError).reason, 'snapshot_too_large')
+  // Eligibility cannot see the cap (it is measurable only after projection),
+  // which is why the handlers catch the builder's refusal on preview, create
+  // and refresh.
+  assert(evaluateSessionEligibility(over, drills, [], null).eligible)
+  // A realistic session is nowhere near it.
+  const six = drills.slice(0, 6)
+  const ok = buildSessionSnapshot(session({ activities: six.map((dr) => ({ phase: 'Skill', drill_id: dr.id, duration: 1 })) }), six, [], null, AT)
+  assert(jsonbTextBytes(ok) < MAX_SNAPSHOT_BYTES / 4)
 })
 
 Deno.test('diagram: the builder is deterministic with a diagram', () => {

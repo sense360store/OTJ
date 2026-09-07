@@ -494,6 +494,9 @@ const MIN_ZONE_SIZE = 0.04
 const MIN_GOAL_WIDTH = 0.06
 const MAX_GOAL_WIDTH = 0.6
 const DIAGRAM_COORD_DP = 4
+// Four place fractions add with binary error; a sum meant to be exactly one
+// can land a hair over it.
+const GEOMETRY_EPSILON = 1e-9
 
 export const DIAGRAM_SURFACE_KINDS = ['full_pitch', 'half_pitch', 'blank'] as const
 export const DIAGRAM_ORIENTATIONS = ['portrait', 'landscape'] as const
@@ -750,6 +753,7 @@ export function isPublicDrillDiagram(value: unknown): value is PublicDrillDiagra
         break
       case 'goal':
         if (!isFraction(raw.x) || !isFraction(raw.y) || !isFraction(raw.width)) return false
+        if ((raw.width as number) < MIN_GOAL_WIDTH || (raw.width as number) > MAX_GOAL_WIDTH) return false
         if (!inVocab(DIAGRAM_FACINGS, raw.facing)) return false
         break
       case 'arrow':
@@ -758,6 +762,11 @@ export function isPublicDrillDiagram(value: unknown): value is PublicDrillDiagra
         break
       case 'zone':
         if (!isFraction(raw.x) || !isFraction(raw.y) || !isFraction(raw.w) || !isFraction(raw.h)) return false
+        // The projector's own geometry: a zone is at least the minimum size and
+        // sits wholly on the surface. Anything else was never emitted by it.
+        if ((raw.w as number) < MIN_ZONE_SIZE || (raw.h as number) < MIN_ZONE_SIZE) return false
+        if ((raw.x as number) + (raw.w as number) > 1 + GEOMETRY_EPSILON) return false
+        if ((raw.y as number) + (raw.h as number) > 1 + GEOMETRY_EPSILON) return false
         if (!inVocab(DIAGRAM_COLOURS, raw.colour)) return false
         break
       case 'text':
@@ -1013,6 +1022,7 @@ export type SessionBlockReason =
   | 'media_path_invalid'
   | 'board_missing'
   | 'unsupported_item'
+  | 'snapshot_too_large'
 
 export interface SessionEligibility {
   eligible: boolean
@@ -1253,6 +1263,15 @@ export function buildSessionSnapshot(
     public: true,
   }
 
+  // The cap is measurable only after projection, and since DRILL-02b a session
+  // can reach it (roughly forty drawn drills at sixty elements each). Refusing
+  // here with the stated reason is what turns the RPC's bare exception, which
+  // the handler reports as a generic failure, into a sentence the coach can
+  // act on, on preview, on create and on refresh alike.
+  if (jsonbTextBytes(snapshot) > MAX_SNAPSHOT_BYTES) {
+    throw new SessionBuildError('snapshot_too_large', 'buildSessionSnapshot: refusing to project a snapshot over the size cap')
+  }
+
   assertAllowlistedKeys(snapshot)
   return snapshot
 }
@@ -1368,12 +1387,71 @@ export interface ProgrammeEligibility {
 // message. The throws are defensive (the caller must evaluate eligibility
 // first), so a reason arriving here at all means eligibility and the builder
 // disagreed, which is worth surfacing accurately rather than mislabelling.
-export class ProgrammeBuildError extends Error {
-  readonly reason: ProgrammeBlockReason
-  constructor(reason: ProgrammeBlockReason, message: string) {
+// The stored size of a snapshot, measured the way the lifecycle RPC measures
+// it. content_share_resolve_snapshot checks octet_length(p_snapshot::text),
+// and jsonb's text form is wider than compact JSON: Postgres prints ", "
+// between members and ": " after every key. Measuring compact bytes let a
+// builder pass what the RPC then refused with a bare exception, which reached
+// the coach as a generic failure. This walks the value in the RPC's own
+// format so the builder's answer and the database's agree. Key order and
+// duplicate keys do not change the count (the builders emit neither), and the
+// number and string forms the builders emit print identically in both.
+export function jsonbTextBytes(value: unknown): number {
+  let out = ''
+  const walk = (v: unknown): void => {
+    if (v === null || typeof v !== 'object') {
+      out += JSON.stringify(v)
+      return
+    }
+    if (Array.isArray(v)) {
+      out += '['
+      v.forEach((item, i) => {
+        if (i > 0) out += ', '
+        walk(item)
+      })
+      out += ']'
+      return
+    }
+    out += '{'
+    let first = true
+    for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
+      if (child === undefined) continue
+      if (!first) out += ', '
+      first = false
+      out += JSON.stringify(k) + ': '
+      walk(child)
+    }
+    out += '}'
+  }
+  walk(value)
+  return new TextEncoder().encode(out).length
+}
+
+// A builder's refusal of its own output, carrying the closed reason the
+// client already knows how to word. The session and programme builders each
+// subclass it so a handler can tell a stated refusal from an unexpected
+// failure.
+export class SnapshotBuildError extends Error {
+  readonly reason: string
+  constructor(reason: string, message: string) {
     super(message)
-    this.name = 'ProgrammeBuildError'
+    this.name = 'SnapshotBuildError'
     this.reason = reason
+  }
+}
+
+export class SessionBuildError extends SnapshotBuildError {
+  constructor(reason: SessionBlockReason, message: string) {
+    super(reason, message)
+    this.name = 'SessionBuildError'
+  }
+}
+
+export class ProgrammeBuildError extends SnapshotBuildError {
+  declare readonly reason: ProgrammeBlockReason
+  constructor(reason: ProgrammeBlockReason, message: string) {
+    super(reason, message)
+    this.name = 'ProgrammeBuildError'
   }
 }
 
@@ -1696,7 +1774,7 @@ export function buildProgrammeSnapshot(
 
   // The RPC enforces this too and is the authority; checking here turns a bare
   // database exception into a stated reason the coach can act on.
-  if (new TextEncoder().encode(JSON.stringify(snapshot)).length > MAX_SNAPSHOT_BYTES) {
+  if (jsonbTextBytes(snapshot) > MAX_SNAPSHOT_BYTES) {
     throw new ProgrammeBuildError('snapshot_too_large', 'buildProgrammeSnapshot: refusing to project a snapshot over the size cap')
   }
 

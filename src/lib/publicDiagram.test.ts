@@ -87,6 +87,12 @@ describe('validatePublicDiagram', () => {
       ['an unknown colour', mutated((d) => { el(d, 0).colour = 'purple' })],
       ['an unknown facing', mutated((d) => { el(d, 3).facing = 'sideways' })],
       ['a goal width off the surface', mutated((d) => { el(d, 3).width = 2 })],
+      ['a goal narrower than the projector emits', mutated((d) => { el(d, 3).width = 0.01 })],
+      ['a goal wider than the projector emits', mutated((d) => { el(d, 3).width = 0.9 })],
+      ['a zone off the right edge', mutated((d) => { el(d, 5).x = 0.9; el(d, 5).w = 0.5 })],
+      ['a zone off the bottom edge', mutated((d) => { el(d, 5).y = 0.9; el(d, 5).h = 0.5 })],
+      ['an invisible zone', mutated((d) => { el(d, 5).w = 0 })],
+      ['a zone under the minimum size', mutated((d) => { el(d, 5).h = 0.01 })],
       ['an unknown arrow', mutated((d) => { el(d, 4).arrow = 'teleport' })],
       ['a zone size off the surface', mutated((d) => { el(d, 5).w = 1.2 })],
       ['no elements at all', mutated((d) => { d.elements = [] })],
@@ -99,6 +105,11 @@ describe('validatePublicDiagram', () => {
     for (const [label, value] of cases) {
       expect(validatePublicDiagram(value), `accepted ${label}`).toBe(false)
     }
+  })
+
+  it('accepts a zone that ends exactly on the edge, and one whose sum carries binary error', () => {
+    expect(validatePublicDiagram(mutated((d) => { el(d, 5).x = 0.6; el(d, 5).w = 0.4 }))).toBe(true)
+    expect(validatePublicDiagram(mutated((d) => { el(d, 5).x = 0.7; el(d, 5).w = 0.3 }))).toBe(true)
   })
 
   it('accepts a whole emoji in a label, which is two code units', () => {

@@ -57,6 +57,7 @@ import {
   evaluateProgrammeEligibility,
   evaluateSessionEligibility,
   ProgrammeBuildError,
+  SnapshotBuildError,
   generateSecret,
   type MediaRow,
   type ProgrammeRow,
@@ -279,6 +280,15 @@ async function hasPerm(db: any, capability: string): Promise<boolean | null> {
 // nothing new reaches the client.
 function programmeBuildReason(err: unknown): string {
   return err instanceof ProgrammeBuildError ? err.reason : 'snapshot_too_large'
+}
+
+// The session builder's stated refusal (today only the size cap, measurable
+// after projection). Anything else is not a refusal but a defect, and it is
+// rethrown so the outer handler reports it as an unexpected failure rather
+// than dressing it as a reason the coach could act on.
+function sessionBuildReason(err: unknown): string {
+  if (err instanceof SnapshotBuildError) return err.reason
+  throw err
 }
 
 function errCode(err: any): string {
@@ -569,7 +579,22 @@ async function handlePreviewSession(admin: AdminClient, clubId: string, sourceId
   const elig = withPathBlockers(evaluateSessionEligibility(session, drills, media, board), media)
   let preview: unknown = null
   if (elig.eligible) {
-    preview = toPublicSessionProjection(buildSessionSnapshot(session, drills, media, board, new Date().toISOString()))
+    // The builder can still refuse on the size cap, measurable only after
+    // projection. Surface that as a blocker rather than a 500, so the coach
+    // sees a stated reason and is never offered a confirmation that would
+    // then fail.
+    try {
+      preview = toPublicSessionProjection(buildSessionSnapshot(session, drills, media, board, new Date().toISOString()))
+    } catch (err) {
+      return reply(200, {
+        ok: true,
+        eligible: false,
+        blocked: [sessionBuildReason(err)],
+        rights: { source: session.rights as ContentRights },
+        provenance: provenanceOf(session, { drills, media }),
+        preview: null,
+      })
+    }
   }
   return reply(200, {
     ok: true,
@@ -710,7 +735,12 @@ async function handleCreateSession(
     return reply(422, { error: 'This session cannot be shared publicly.', blocked: elig.blocked })
   }
 
-  const snapshot = buildSessionSnapshot(session, drills, media, board, new Date().toISOString())
+  let snapshot
+  try {
+    snapshot = buildSessionSnapshot(session, drills, media, board, new Date().toISOString())
+  } catch (err) {
+    return reply(422, { error: 'This session cannot be shared publicly.', blocked: [sessionBuildReason(err)] })
+  }
   const secret = generateSecret()
   const secretHash = await secretHashLiteral(secret)
 
@@ -871,7 +901,12 @@ async function handleRefreshSession(
   if (!elig.eligible) {
     return reply(422, { error: 'This session can no longer be shared publicly.', blocked: elig.blocked })
   }
-  const snapshot = buildSessionSnapshot(session, drills, media, board, new Date().toISOString())
+  let snapshot
+  try {
+    snapshot = buildSessionSnapshot(session, drills, media, board, new Date().toISOString())
+  } catch (err) {
+    return reply(422, { error: 'This session can no longer be shared publicly.', blocked: [sessionBuildReason(err)] })
+  }
 
   const { data: _data, error } = await admin.rpc('manage_content_share', {
     p_action: 'refresh',
