@@ -9,6 +9,14 @@
 // latest drills and templates. A number only rides inside a card that does
 // something; there are no standalone stat tiles. The corner distribution moved
 // to the Drill Library as a filter-aware strip.
+//
+// VISUAL-02 brought it onto the shared system: PageHeader for the heading,
+// Button for every hand written class string, Badge for the one status a row
+// carries, and the type and spacing scales for everything that was an inline
+// size. Nothing about what the screen decides moved: which session leads,
+// which rows the week lists, which actions a capability set is offered and
+// where each control navigates are exactly what they were, and
+// src/routes/home.screens.test.tsx pins them against the real screen.
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -29,14 +37,21 @@ import {
 import { FA_IMPORT_CAPS, hasAllCaps, sessionMinutes } from '../lib/data'
 import { ALL_EVENTS_LABEL, isTrainingEvent, TRAINING_LABEL } from '../lib/eventKind'
 import { applyEventFilter, DEFAULT_EVENT_FILTER, pickNextEvent, type EventFilterState } from '../lib/eventFilter'
-import { isSessionActive, isSessionEndedToday, isSessionLive, isSessionOperational } from '../lib/sessionLifecycle'
+import {
+  ENDED_TODAY_LABEL,
+  isSessionActive,
+  isSessionEndedToday,
+  isSessionLive,
+  isSessionOperational,
+} from '../lib/sessionLifecycle'
 import { compareNewestFirst } from '../lib/contentOrder'
 import type { Session, Template } from '../lib/data'
 import { sessionTeamsLabel } from '../lib/sessionTeams'
 import { venueNameFor } from '../lib/venues'
 import { Icon } from '../components/icons'
 import type { IconComponent } from '../components/icons'
-import { Chip, DrillCard, Empty, ErrorNote, Loading, MediaThumb } from '../components/ui'
+import { cardKeyActivates, Chip, DrillCard, Empty, ErrorNote, Loading, MediaThumb } from '../components/ui'
+import { Badge, Button, PageHeader } from '../components/primitives'
 import { DrillFormModal } from '../components/DrillFormModal'
 import { ImportFAModal } from '../components/ImportFAModal'
 import { UploadModal } from './Media'
@@ -118,7 +133,7 @@ function NextSessionHero({
         · {live ? 'Live now' : countdownLabel(s.date, todayStr)}
       </div>
       <h2>{s.name}</h2>
-      {s.focus && <div style={{ fontWeight: 700, color: 'var(--brand-gold)', fontSize: 'var(--text-md)' }}>{s.focus}</div>}
+      {s.focus && <div className="hero-focus">{s.focus}</div>}
       <div className="hero-meta">
         <span className="row">
           <Icon.calendar />
@@ -141,22 +156,21 @@ function NextSessionHero({
         </span>
       </div>
       <div className="hero-acts">
-        <button className="btn btn-gold btn-lg" onClick={() => nav('sessionDay', { sessionId: s.id })}>
-          <Icon.cone />
+        <Button variant="gold" size="lg" icon={Icon.cone} onClick={() => nav('sessionDay', { sessionId: s.id })}>
           Session day
-        </button>
-        <button className="btn btn-on-dark btn-lg" onClick={() => nav('live', { sessionId: s.id })}>
-          {canManage && !live ? <Icon.play /> : <Icon.eye />}
+        </Button>
+        <Button
+          variant="on-dark"
+          size="lg"
+          icon={canManage && !live ? Icon.play : Icon.eye}
+          onClick={() => nav('live', { sessionId: s.id })}
+        >
           Live
-        </button>
+        </Button>
         {canManage && (
-          <button
-            className="btn btn-on-dark btn-lg"
-            onClick={() => nav('planner', { sessionId: s.id })}
-          >
-            <Icon.edit />
+          <Button variant="on-dark" size="lg" icon={Icon.edit} onClick={() => nav('planner', { sessionId: s.id })}>
             Edit
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -198,20 +212,17 @@ function EmptyHero({
           : 'Plan your next session and it lands here with a countdown and the day plan.'}
       </p>
       <div className="hero-acts">
-        <button className="btn btn-gold btn-lg" onClick={() => nav('planner')}>
-          <Icon.plus />
+        <Button variant="gold" size="lg" icon={Icon.plus} onClick={() => nav('planner')}>
           {fresh ? 'Plan your first session' : 'Plan a session'}
-        </button>
+        </Button>
         {fresh && (
           <>
-            <button className="btn btn-on-dark btn-lg" onClick={() => nav('library')}>
-              <Icon.grid />
+            <Button variant="on-dark" size="lg" icon={Icon.grid} onClick={() => nav('library')}>
               Browse the drill library
-            </button>
-            <button className="btn btn-on-dark btn-lg" onClick={onImport}>
-              <Icon.download />
+            </Button>
+            <Button variant="on-dark" size="lg" icon={Icon.download} onClick={onImport}>
               Import an FA session
-            </button>
+            </Button>
           </>
         )}
       </div>
@@ -238,7 +249,7 @@ function WeekRow({
 }) {
   const d = new Date(s.date + 'T00:00:00')
   return (
-    <button className="week-row" onClick={() => nav('sessionDay', { sessionId: s.id })}>
+    <button type="button" className="week-row" onClick={() => nav('sessionDay', { sessionId: s.id })}>
       <span className="ww">
         <span className="ww-day">{d.toLocaleDateString('en-GB', { weekday: 'short' })}</span>
         <span className="ww-num">{d.getDate()}</span>
@@ -250,14 +261,7 @@ function WeekRow({
             <Icon.clock />
             {s.time}
           </span>
-          {ended && (
-            <span
-              className="pill"
-              style={{ color: 'var(--ink)', background: 'color-mix(in srgb, var(--gold) 16%, transparent)' }}
-            >
-              Ended earlier today
-            </span>
-          )}
+          {ended && <Badge>{ENDED_TODAY_LABEL}</Badge>}
           <span className="pill">
             <Icon.flag />
             {teamName}
@@ -270,7 +274,7 @@ function WeekRow({
           )}
         </span>
       </span>
-      <Icon.chevR style={{ width: 16, height: 16, color: 'var(--slate-2)', flex: '0 0 16px' }} />
+      <Icon.chevR className="week-chev" aria-hidden="true" />
     </button>
   )
 }
@@ -284,21 +288,35 @@ function TemplateMiniCard({ t, onClick }: { t: Template; onClick: () => void }) 
   const mediaId = t.activities.map((a) => (a.drillId ? drillById[a.drillId]?.mediaId : null)).find((id) => !!id)
   const media = mediaId ? mediaById[mediaId] : undefined
   return (
-    <div className="drill-card" onClick={onClick}>
-      <div className="dc-corner-strip" style={{ background: 'var(--gold)' }}></div>
-      <div style={{ padding: 0 }}>
+    // The same keyboard path DrillCard carries: the whole card is the control,
+    // so it is reachable by Tab and activated by Enter or Space, and it takes
+    // the shared focus ring through the element level [tabindex] rule.
+    <div
+      className="drill-card tpl-card"
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (cardKeyActivates(e.key)) {
+          e.preventDefault()
+          onClick()
+        }
+      }}
+    >
+      <div className="dc-corner-strip tpl-strip"></div>
+      <div>
         {media ? (
           <MediaThumb media={media} showBadge={false} showPlay={false} />
         ) : (
-          <div className="thumb thumb-diagram">
-            <Icon.book style={{ width: 30, height: 30, color: 'var(--slate-2)' }} />
+          <div className="thumb thumb-diagram tpl-thumb">
+            <Icon.book aria-hidden="true" />
           </div>
         )}
       </div>
       <div className="dc-body">
-        <div className="row" style={{ justifyContent: 'space-between' }}>
-          <span className="tag" style={{ color: 'var(--ink)', background: 'var(--gold-soft)' }}>
-            <Icon.book style={{ width: 12, height: 12 }} />
+        <div className="row tpl-head">
+          <span className="tag tpl-tag">
+            <Icon.book aria-hidden="true" />
             Template
           </span>
           <span className="pill">
@@ -307,20 +325,7 @@ function TemplateMiniCard({ t, onClick }: { t: Template; onClick: () => void }) 
           </span>
         </div>
         <h3>{t.name}</h3>
-        <p
-          className="muted"
-          style={{
-            fontSize: 13,
-            lineHeight: 1.45,
-            margin: 0,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-          }}
-        >
-          {t.focus}
-        </p>
+        <p className="muted tpl-summary">{t.focus}</p>
         <div className="dc-meta">
           <span className="pill">
             <Icon.list />
@@ -375,6 +380,11 @@ function CoachHome() {
   const canPlan = caps.has('sessions.create')
 
   if (sessionsLoading || drillsLoading || templatesLoading) return <Loading />
+  // No Retry here, and that is a recorded gap rather than an omission: the
+  // sessions read arrives through SessionsContext, which exposes no refetch,
+  // and a Retry that refetched only the drills and templates would claim
+  // more than it did. Widening the context is a change to a seam the
+  // planner and Sessions share, which is not this slice's.
   if (sessionsError || drillsError || templatesError) return <ErrorNote />
 
   const now = new Date()
@@ -463,17 +473,15 @@ function CoachHome() {
 
   return (
     <div>
-      <div className="page-head">
-        <div>
-          <div className="eyebrow">{todayLine}</div>
-          <h1 style={{ marginTop: 4 }}>Welcome back{firstName ? `, ${firstName}` : ''}</h1>
-          <div className="sub">
-            {canPlan
-              ? 'Your schedule first, then everything you need for the next session.'
-              : "The club schedule and the latest from the club's coaches."}
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={todayLine}
+        title={`Welcome back${firstName ? `, ${firstName}` : ''}`}
+        sub={
+          canPlan
+            ? 'Your schedule first, then everything you need for the next session.'
+            : "The club schedule and the latest from the club's coaches."
+        }
+      />
 
       <div className="home-top">
         {next ? (
@@ -492,9 +500,12 @@ function CoachHome() {
           <EmptyHero coaching={canPlan} fresh={fresh} nav={nav} onImport={() => setImportOpen(true)} />
         )}
 
+        {/* A level two section beside the hero, so its heading is an h2 like
+            the hero's: This week is a sibling of the next session, not a part
+            of it. */}
         <div className="card week-card">
           <div className="week-head">
-            <h3>This week</h3>
+            <h2>This week</h2>
             <span className="pill">
               <Icon.calendar />
               {week.length} session{week.length !== 1 ? 's' : ''}
@@ -539,10 +550,10 @@ function CoachHome() {
             )}
           </div>
           <div className="week-foot">
-            <button className="btn btn-quiet" onClick={() => nav('sessions')}>
+            <Button variant="quiet" block onClick={() => nav('sessions')}>
               View all sessions
               <Icon.arrowRight />
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -550,8 +561,16 @@ function CoachHome() {
       {actions.length > 0 && (
         <div className="qa-grid">
           {actions.map((a) => (
-            <button key={a.label} className={'qa-btn' + (a.live ? ' qa-live' : '')} onClick={a.on}>
-              <span className="qa-ico">
+            // The whole card is the control, which is the shape 2.8's
+            // interactive card exists for; it is a real button rather than a
+            // Card, because a Card is a div and this is pressed.
+            <button
+              key={a.label}
+              type="button"
+              className={'card card-raised card-interactive qa-btn' + (a.live ? ' qa-live' : '')}
+              onClick={a.on}
+            >
+              <span className="qa-ico" aria-hidden="true">
                 <a.icon />
               </span>
               {a.label}
@@ -560,15 +579,15 @@ function CoachHome() {
         </div>
       )}
 
-      <div className="spread" style={{ marginBottom: 14 }}>
-        <div className="section-title" style={{ margin: 0 }}>
-          <Icon.sparkle />
-          <h3>What's new at the club</h3>
+      <div className="spread home-section-head">
+        <div className="section-title">
+          <Icon.sparkle aria-hidden="true" />
+          <h2>What's new at the club</h2>
         </div>
-        <button className="btn btn-quiet btn-sm" onClick={() => nav('library')}>
+        <Button variant="quiet" size="sm" onClick={() => nav('library')}>
           View library
           <Icon.arrowRight />
-        </button>
+        </Button>
       </div>
       {whatsNew.length === 0 ? (
         <Empty icon={Icon.sparkle} title="Nothing here yet">

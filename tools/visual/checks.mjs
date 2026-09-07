@@ -4280,6 +4280,233 @@ const focusReturned = async (page, d) => {
   }
 }
 
+/* ---- VISUAL-02: Home -----------------------------------------------------
+   The two screens behind `/`, measured rather than read. What this slice
+   changed is presentation, so the claims are computed styles, hit areas,
+   keyboard paths and the shape of each state; the capability matrix and
+   the destinations are pinned in src/routes/home.screens.test.tsx. */
+{
+  /* ---- the page's own structure, on both homes ---- */
+  for (const caps of ['coach', 'parent']) {
+    const page = await open('home', 390, { caps })
+    const r = await page.evaluate(() => ({
+      h1: [...document.querySelectorAll('h1')].map((e) => e.textContent),
+      h2: document.querySelectorAll('.content h2').length,
+      h3: [...document.querySelectorAll('.content h3')].filter((e) => !e.closest('.drill-card')).length,
+      inline: [...document.querySelectorAll('.content [style]')].filter((e) => !e.closest('.drill-card')).length,
+    }))
+    check(`${caps} home: one h1, level two sections, no inline style outside the shared drill card`,
+      r.h1.length === 1 && r.h2 >= 2 && r.h3 === 0 && r.inline === 0, JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- hit areas: every control the coach home offers ---- */
+  {
+    const page = await open('home', 360, { caps: 'coach' })
+    const r = await page.evaluate(() => {
+      const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+      const hit = (el) => {
+        const b = el.getBoundingClientRect()
+        const a = getComputedStyle(el, '::after')
+        const h = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+        const w = a.content === 'none' ? b.width : Math.max(b.width, px(a.width))
+        return { h: Math.round(h), w: Math.round(w) }
+      }
+      const short = []
+      for (const [label, sel] of [
+        ['hero action', '.hero-acts .btn'],
+        ['week chip', '.week-head .chip'],
+        ['week row', '.week-row'],
+        ['week foot', '.week-foot .btn'],
+        ['quick action', '.qa-btn'],
+        ['view library', '.home-section-head .btn'],
+      ]) {
+        const els = [...document.querySelectorAll(sel)]
+        if (els.length === 0) short.push(`${label}: none on the page`)
+        for (const el of els) {
+          const { h, w } = hit(el)
+          if (h < 44 || w < 44) short.push(`${label} ${h}x${w}`)
+        }
+      }
+      return short
+    })
+    check('every control on the coach home reaches a 44px hit area at 360', r.length === 0, r.join(', '))
+
+    // Nothing pushes the page wider than the phone, in the default state.
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    check('the coach home does not scroll sideways at 360', over <= 0, `${over}px over`)
+    await page.close()
+  }
+
+  /* ---- the hero's controls draw the hero's own ring ---- */
+  {
+    const page = await open('home', 1280, { caps: 'coach' })
+    if (await focused(page.locator('.hero-acts .btn').first(), 'the hero action takes focus')) {
+      const ring = await page.evaluate(() => {
+        const el = document.activeElement
+        const cs = getComputedStyle(el)
+        return { width: cs.outlineWidth, colour: cs.outlineColor, offset: cs.outlineOffset, cls: el.className }
+      })
+      // The hero re-points --focus to a gold that clears navy; the shared
+      // royal ring would measure 2.21:1 against the brand gradient.
+      check('a focused hero button draws the hero\'s gold ring',
+        ring.width === '2px' && ring.colour === 'rgb(255, 215, 94)' && ring.offset === '2px', JSON.stringify(ring))
+    }
+    for (const [what, sel] of [['a week row', '.week-row'], ['a quick action', '.qa-btn'], ['a drill card', '.drill-card']]) {
+      if (await focused(page.locator(sel).first(), `${what} takes focus`)) {
+        const ring = await page.evaluate(() => {
+          const cs = getComputedStyle(document.activeElement)
+          return { width: cs.outlineWidth, colour: cs.outlineColor }
+        })
+        check(`${what} draws the shared ring when focused`, ring.width === '2px' && ring.colour === 'rgb(31, 67, 214)', JSON.stringify(ring))
+      }
+    }
+    await page.close()
+  }
+
+  /* ---- keyboard paths: a card and a row are activated from the keyboard ----
+     Both were a div with an onClick that no keyboard could reach; the drill
+     card is fixed in the shared primitive and the template card beside it.
+     Proved by DESTINATION, read from the harness's route witness, because a
+     press that ran a handler which navigated nowhere is a press that did
+     nothing. */
+  {
+    const page = await open('home', 1280, { caps: 'coach' })
+    const before = await page.evaluate(() => document.querySelector('.content')?.getAttribute('data-path'))
+    if (await focused(page.locator('.drill-card:not(.tpl-card)').first(), 'the drill card takes focus')) {
+      await page.keyboard.press('Enter')
+      await page.waitForTimeout(150)
+      const after = await page.evaluate(() => document.querySelector('.content')?.getAttribute('data-path') ?? 'gone')
+      check('Enter on a focused drill card opens the drill', before === '/' && /^\/drill\//.test(after), `${before} -> ${after}`)
+    }
+    await page.close()
+  }
+  {
+    const page = await open('home', 1280, { caps: 'coach' })
+    if (await focused(page.locator('.tpl-card').first(), 'the template card takes focus')) {
+      await page.keyboard.press('Space')
+      await page.waitForTimeout(150)
+      const after = await page.evaluate(() => document.querySelector('.content')?.getAttribute('data-path') ?? 'gone')
+      check('Space on a focused template card opens the templates', after === '/templates', after)
+    }
+    await page.close()
+  }
+  {
+    const page = await open('home', 1280, { caps: 'coach' })
+    if (await focused(page.locator('.week-row').first(), 'the week row takes focus')) {
+      await page.keyboard.press('Enter')
+      await page.waitForTimeout(150)
+      const after = await page.evaluate(() => document.querySelector('.content')?.getAttribute('data-path') ?? 'gone')
+      check('Enter on a focused week row opens session day', /^\/session-day\//.test(after), after)
+    }
+    await page.close()
+  }
+  {
+    // A card with nothing to open is NOT a control: the tab stop and the
+    // role come with the onClick, so the primitive grants nothing to a
+    // caller that passes none. Proved on the parent dashboard's drill cards,
+    // which DO open, against the template card, by counting.
+    const page = await open('home', 1280, { caps: 'parent' })
+    const r = await page.evaluate(() => ({
+      cards: document.querySelectorAll('.drill-card').length,
+      controls: document.querySelectorAll('.drill-card[role="button"][tabindex="0"]').length,
+    }))
+    check('every drill card the parent can open is a control', r.cards > 0 && r.cards === r.controls, JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- the week filters are pressed, and the list follows ---- */
+  {
+    const page = await open('home', 390, { caps: 'coach' })
+    const rows = () => page.evaluate(() => document.querySelectorAll('.week-row').length)
+    const before = await rows()
+    if (await pressed(page.getByRole('button', { name: 'Mine', exact: true }), 'Mine is pressed')) {
+      await page.waitForTimeout(150)
+      const r = await page.evaluate(() => ({
+        pressed: document.querySelector('.week-head .chip:nth-child(5)')?.getAttribute('aria-pressed'),
+        rows: document.querySelectorAll('.week-row').length,
+      }))
+      // Two of the four upcoming rows are the signed in coach's own.
+      check('Mine narrows the week to the coach\'s own sessions and says so', r.pressed === 'true' && before === 4 && r.rows === 2, JSON.stringify({ before, ...r }))
+    }
+    await page.close()
+  }
+
+  /* ---- the ended Badge is a dot plus a word, on both homes ---- */
+  for (const caps of ['coach', 'parent']) {
+    const page = await open('home', 390, { caps, state: 'endedtoday' })
+    const r = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('.badge')].find((el) => (el.textContent ?? '').includes('Ended earlier today'))
+      if (!b) return null
+      const dot = b.querySelector('.badge-dot')
+      return { word: b.textContent.trim(), dot: !!dot && getComputedStyle(dot).width === '8px', tint: getComputedStyle(b).backgroundColor }
+    })
+    check(`${caps} home: the ended row carries a Badge with a dot and the word`, !!r && r.dot && r.word === 'Ended earlier today', JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- the parent's no team notice is the shared Note, with a glyph ---- */
+  {
+    const page = await open('home', 390, { caps: 'parent', state: 'noteam' })
+    const r = await page.evaluate(() => {
+      const n = document.querySelector('.note.note-info')
+      if (!n) return null
+      const svg = n.querySelector(':scope > svg')
+      return { glyph: !!svg && svg.getAttribute('aria-hidden') === 'true', title: n.querySelector('b')?.textContent, border: getComputedStyle(n).borderTopColor }
+    })
+    check('the no team notice is an info Note with its glyph and its title', !!r && r.glyph && r.title === 'No team set yet', JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- long strings, at the narrowest phone, on both homes ---- */
+  for (const caps of ['coach', 'parent']) {
+    const page = await open('home', 360, { caps, state: 'longnames' })
+    const r = await page.evaluate(() => {
+      const doc = document.documentElement
+      const wide = [...document.querySelectorAll('.content *')]
+        .filter((el) => el.getBoundingClientRect().right > doc.clientWidth + 1)
+        .map((el) => el.className || el.tagName)
+      return { page: doc.scrollWidth - doc.clientWidth, wide: [...new Set(wide)].slice(0, 4) }
+    })
+    check(`${caps} home: long strings push nothing past the 360 viewport`, r.page <= 0 && r.wide.length === 0, JSON.stringify(r))
+    await page.close()
+  }
+
+  /* ---- the two read states, on both homes ---- */
+  for (const caps of ['coach', 'parent']) {
+    const loading = await open('home', 390, { caps, state: 'homeloading' })
+    const l = await loading.evaluate(() => ({
+      spinner: !!document.querySelector('.content > .loading[role="status"] .spinner'),
+      h1: document.querySelectorAll('h1').length,
+    }))
+    check(`${caps} home: the load is a labelled spinner and nothing else`, l.spinner && l.h1 === 0, JSON.stringify(l))
+    await loading.close()
+    const failedRead = await open('home', 390, { caps, state: 'homeerror' })
+    const e = await failedRead.evaluate(() => {
+      const n = document.querySelector('.content > .state-error[role="alert"]')
+      return n ? { glyph: !!n.querySelector('svg'), border: getComputedStyle(n).borderTopColor } : null
+    })
+    check(`${caps} home: a failed read is the announced danger state with its glyph`, !!e && e.glyph && e.border === 'rgb(198, 40, 40)', JSON.stringify(e))
+    await failedRead.close()
+  }
+
+  /* ---- the dark theme: the hero is the same navy, and its text is fixed white ---- */
+  {
+    const page = await open('home', 1280, { caps: 'coach', theme: 'dark' })
+    const r = await page.evaluate(() => {
+      const h = document.querySelector('.hero')
+      const t = document.querySelector('.hero h2')
+      const f = document.querySelector('.hero-focus')
+      return h && t && f
+        ? { ground: getComputedStyle(h).backgroundImage.slice(0, 40), title: getComputedStyle(t).color, focus: getComputedStyle(f).color }
+        : null
+    })
+    check('in the dark theme the hero keeps the brand gradient under fixed white and gold text',
+      !!r && r.ground.startsWith('linear-gradient') && r.title === 'rgb(255, 255, 255)' && r.focus === 'rgb(244, 192, 32)', JSON.stringify(r))
+    await page.close()
+  }
+}
+
 /* ---- reduced motion ---- */
 {
   const page = await open('dialog', 1280, { reducedMotion: true })

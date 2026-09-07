@@ -70,6 +70,11 @@ const OWNED_FILES = [
   'routes/AdminUsers.tsx',
   'routes/AdminTeams.tsx',
   'components/Tick.tsx',
+  // VISUAL-02, Home: the coach home and the parent dashboard behind the one
+  // route. Between them they carried six inline sizes and every step in
+  // their two stylesheets off the scale; neither writes an inline style now.
+  'routes/Home.tsx',
+  'routes/ParentHome.tsx',
 ]
 
 
@@ -459,6 +464,13 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
     // inline style either of them writes is the bib swatch's fill.
     'routes/AdminUsers.tsx',
     'routes/AdminTeams.tsx',
+    // VISUAL-02, Home: both routes behind `/` and both of their stylesheets.
+    // The stylesheets are the first route stylesheets after Login.css to be
+    // owned for their steps, so the off scale rule below reads a LIST now.
+    'routes/Home.tsx',
+    'routes/ParentHome.tsx',
+    'routes/Home.css',
+    'routes/ParentHome.css',
   ]
 
   it('writes no inline margin, padding or gap outside the spacing scale', () => {
@@ -478,21 +490,29 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
     expect(offenders).toEqual([])
   })
 
-  it('leaves no off scale step in the stylesheet this wave brought onto it', () => {
-    // The same shape as the shared stylesheet's own rule, applied to the one
-    // route stylesheet this wave owns. A literal is allowed only where it is
+  it('leaves no off scale step in the stylesheets the waves brought onto it', () => {
+    // The same shape as the shared stylesheet's own rule, applied to every
+    // route stylesheet a wave owns. A literal is allowed only where it is
     // not a step: zero, a hairline, and a percentage or auto.
-    const css = read(sourceFiles.find((f) => rel(f) === 'routes/Login.css')!)
     const offenders: string[] = []
-    for (const m of css.matchAll(/(margin|padding|gap)[a-z-]*: *([^;]+);/g)) {
-      for (const value of m[2].trim().split(/\s+/)) {
-        if (/^var\(--space-/.test(value)) continue
-        if (/^(0|auto|inherit|initial)$/.test(value)) continue
-        if (/^\d+%$/.test(value)) continue
-        offenders.push(`${m[1]}: ${value}`)
+    for (const f of sourceFiles.filter((f) => SPACING_OWNED.includes(rel(f)) && f.endsWith('.css'))) {
+      for (const m of read(f).matchAll(/(margin|padding|gap)[a-z-]*: *([^;]+);/g)) {
+        for (const value of m[2].trim().split(/\s+/)) {
+          if (/^var\(--space-/.test(value)) continue
+          if (/^(0|auto|inherit|initial)$/.test(value)) continue
+          if (/^\d+%$/.test(value)) continue
+          offenders.push(`${rel(f)}: ${m[1]}: ${value}`)
+        }
       }
     }
     expect(offenders).toEqual([])
+  })
+
+  it('reads at least the stylesheets it has always read, so the list rule cannot go vacuous', () => {
+    // The rule above used to name Login.css directly; now it reads the list,
+    // a list with no stylesheet on it would pass with nothing measured.
+    const sheets = SPACING_OWNED.filter((f) => f.endsWith('.css'))
+    for (const f of ['routes/Login.css', 'routes/Home.css', 'routes/ParentHome.css']) expect(sheets).toContain(f)
   })
 
   it('covers every file this wave owns, so the list cannot quietly shrink', () => {
@@ -506,6 +526,10 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
       'routes/Feedback.tsx',
       'routes/AdminUsers.tsx',
       'routes/AdminTeams.tsx',
+      'routes/Home.tsx',
+      'routes/ParentHome.tsx',
+      'routes/Home.css',
+      'routes/ParentHome.css',
     ]) {
       expect(SPACING_OWNED, `${f} is covered`).toContain(f)
       expect(sourceFiles.map(rel), `${f} exists`).toContain(f)

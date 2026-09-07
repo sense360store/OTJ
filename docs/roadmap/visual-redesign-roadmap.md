@@ -1,8 +1,8 @@
 # OTJ visual redesign roadmap
 
-Status: approved direction. VISUAL-00 and VISUAL-01 delivered; VISUAL-02 is in progress, adopted route by route in seven pull requests, with Home, Sessions and the remaining admin screens still to come.
+Status: approved direction. VISUAL-00 and VISUAL-01 delivered; VISUAL-02 is in progress, adopted route by route in seven merged pull requests with Home under review, and Sessions and the remaining admin screens still to come.
 
-Created: 27 August 2026. VISUAL-00 completed 27 August 2026. VISUAL-01 completed 27 August 2026 (merged at 23:16 UTC, which was already 28 August in Yorkshire). Last reviewed 2 September 2026.
+Created: 27 August 2026. VISUAL-00 completed 27 August 2026. VISUAL-01 completed 27 August 2026 (merged at 23:16 UTC, which was already 28 August in Yorkshire). Last reviewed 6 September 2026.
 
 This document defines the visual redesign programme for OTJ Training Hub. The master roadmap remains the source of truth for priority and status; this file owns the detailed visual-redesign sequence and acceptance criteria.
 
@@ -122,13 +122,14 @@ Players is deliberately in this wave only after #191, so bulk selection, depende
 
 **Acceptance.** Every surface covers normal, loading, empty, error, read-only/permission-limited and narrow-phone states where those states are reachable. Destructive flows remain unmistakably destructive and preserve their existing confirmation semantics.
 
-**Status, 2 September 2026: in progress.** Adopted, each in its own reviewed
+**Status, 6 September 2026: in progress.** Adopted, each in its own reviewed
 PR: Registered Players (#212, #213), Activity (#214), Account (#215), Login and
 Set Password (#216), Feedback (#217), and Admin Users and Admin Teams (#218).
-Not yet adopted from the initial surface group: Home and Sessions, which are
-also VISUAL-01 acceptance surfaces and so have been checked but not adopted in
-full, and the admin screens beyond Users and Teams. The wave is Done when the
-whole initial surface group is adopted, not before.
+Home is adopted in a PR under review (see Home below). Not yet adopted from
+the initial surface group: Sessions, which is also a VISUAL-01 acceptance
+surface and so has been checked but not adopted in full, and the admin
+screens beyond Users and Teams. The wave is Done when the whole initial
+surface group is adopted, not before.
 
 #### Registered Players: complete
 
@@ -770,6 +771,119 @@ cross product change rather than this slice's.
 - **`Empty` emits an `h3`.** On Teams, whose card carries no heading of its
   own, that is the same level jump one branch down. It is a shared primitive
   with thirty callers, so the level is not this slice's to move.
+
+#### Home: adopted, under review
+
+The two screens behind `/` now use the shared system: the coach home and
+the parent dashboard, which `HomeSwitch` dispatches between on
+`sessions.create`. Part 4 names Home at all seven widths and in every
+capability variant it renders, and VISUAL-01 checked it to prove the hero
+and the on-dark button; this slice adopts it in full and covers the state
+matrix each of the two homes owns. The general VISUAL-02 requirement is
+covered too: normal, loading, error, empty where reachable, capability
+limited, narrow phone, long content and both themes.
+
+What the slice adopted: `PageHeader` for both headings (the first caller
+with an eyebrow, so the eyebrow slot's gap to the title is the primitive's
+now rather than an inline margin on the h1), `Button` for the ten hand
+written class strings, `Card` for the parent dashboard's five sections,
+`Note` for the parent's no team notice, `Badge` for the one status a row
+carries on either home, and the type and spacing scales for every inline
+size and off scale step in the two routes and their two stylesheets. Both
+routes write no inline style at all now, and both, with both stylesheets,
+join BOTH of the design system invariant's ownership lists, so neither a
+size nor a step can come back; the off scale step rule reads a list of
+owned stylesheets now rather than naming Login.css alone.
+
+Two rows became cards that are real buttons rather than a local visual
+system: the quick actions (`card card-raised card-interactive`) and the
+parent's Practice at home rows (`card card-tinted card-interactive`). The
+hover lift on the quick actions went with that, for the interactive card's
+own border and shadow treatment; the shared reduced motion block did not
+know the old rule and now has nothing to know.
+
+**The one decision rather than a class swap.** "Ended earlier today" is a
+STATE of a row, and 2.7 says a state is a dot plus a word. It was a gold
+tinted pill on the coach home and a plain pill on the parent dashboard, two
+looks for one fact. Both are the neutral `Badge` now, sharing one constant
+in `src/lib/sessionLifecycle.ts`; the Sessions card still carries the same
+words its own way and is not touched by this slice.
+
+What it deliberately did not do. No query, capability check, lifecycle rule,
+classifier call, filter default, session choice or destination moved:
+`pickNextEvent`, `applyEventFilter`, `isSessionLive` and the rest are called
+with exactly the arguments they were, the quick actions follow exactly the
+capabilities they did, Edit on the hero follows ownership or
+`sessions.manage` as before, and `src/routes/home.screens.test.tsx` pins all
+of it against the real screen. No wording changed. The parent home's
+dispatch, team scope and child data boundary are as they were, and the
+parent variant is asserted to render no coach control.
+
+**One shared component reaches Sessions, and it is said rather than
+hidden.** `NoTeamNote` is exported from `ParentHome.tsx` and rendered by the
+Sessions schedule for a parent with no team. It is the shared info `Note`
+now, so that one notice on Sessions changes with it. It is one component
+rather than two by design; giving Sessions its own copy to keep its pixels
+frozen would be the duplication the programme exists to remove. Nothing in
+`src/routes/Sessions.tsx` changed.
+
+**One shared primitive changed, and it is an accessibility fix rather than
+a restyle.** `DrillCard` was a `div` with an `onClick`, so no keyboard could
+open a drill from Home, the parent dashboard, the Library or a drill's
+related list. It carries `role="button"`, a tab stop and Enter or Space
+activation now, only when it is given an `onClick`, and takes the shared
+ring through the element level `[tabindex]` rule; the template card beside
+it on Home does the same through its own markup. Four screens gain a tab
+stop per card and nothing else. The key rule is pure (`cardKeyActivates`)
+and the browser half is driven in `checks.mjs` by destination.
+
+Four things worth recording, none of them presentation alone:
+
+- **A long session name widened the whole page at 360, and it was latent.**
+  The week list's one line titles are nowrap by design, a grid item's
+  automatic minimum is its min-content, so a title as long as a coach could
+  type set the TRACK: both grid items grew to 799px inside a 360px phone and
+  the hero rode along. No harness fixture had ever carried a long session
+  name, so nothing had measured it. `min-width: 0` on the grid items is the
+  whole fix, and the pills and hero meta rows that can carry a team name
+  typed with no space break it rather than running out of the card.
+- **The template placeholder glyph would have vanished in the dark theme.**
+  It sat on the shared striped placeholder, which is a FIXED light ground,
+  painted `--slate-2` and then `--slate`, both of which go light in the dark
+  theme. It is fixed ink now, the rule `.thumb-label` already follows.
+- **The drill card's duration pill was clipped at 360, and it is the
+  primitive's.** Under the phone grid a card is about 156px wide and the
+  classification tag beside the duration pill does not fit on one line, so
+  the pill ran off the card's edge on Home's What's new and on the Library
+  alike. Seen in a screenshot rather than by a rule. The tag row wraps now,
+  as one shared rule beside `.drill-card .dc-body`, because the primitive
+  carries the rule; the Library gains the same wrap and nothing else.
+- **Two of the coach home's branches are unreachable, and are recorded
+  rather than photographed.** The schedule framing for a member without
+  `sessions.create` and the Watch live quick action both sit behind
+  `canPlan` being false, and such a member is dispatched to the parent
+  dashboard before the coach home renders. They stay as defence in depth in
+  the route and the harness README says why no shot carries their name.
+- **The error state has no Retry, and that is a recorded gap.** The
+  sessions read arrives through `SessionsContext`, which exposes no refetch;
+  a Retry that refetched only the drills and templates would claim more than
+  it did, and widening the context is a change to a seam the planner and
+  Sessions share.
+
+The harness: nine Home states, answered by the stub ONLY while Home is the
+mounted screen so that Sessions, Players and the admin screens (whose Teams
+removal dialog counts sessions per team) keep reading exactly what they
+read; a Home block in `checks.mjs` measuring structure, hit areas, the
+hero's own focus ring, keyboard activation by destination, the filters, the
+Badge, the Note, both read states, long strings at 360 on both homes and
+the dark hero; the state matrix in `shoot.mjs` with a proof per state; and
+the parent only states swept in `contrast.mjs` beside the coach's.
+
+Deferred, each with what would have to be true to fix it: no screen reader
+has been run over either home, so what is proved about announcement is
+structural, as on every adopted screen; the `1 activities` pluralisation on
+a template card is wording and stays; and the shared `DrillCard` still
+carries its own two inline declarations, which are VISUAL-01's file.
 
 ### VISUAL-03 — Feature-area waves
 

@@ -56,7 +56,7 @@ Query string, all optional:
 | `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin`, `planner`, `clubadmin` |
 | `theme` | `light` (default), `dark` |
 | `auth` | `signedin` (default), `signedout` (the default for `screen=login`), `needspassword`, `authloading` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning`, `adminloading`, `adminerror`, `noteams`, `gridloading`, `gridunavailable`, `lastadmin`, `statesunknown`, `orderunset`, `orderincomplete` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning`, `adminloading`, `adminerror`, `noteams`, `gridloading`, `gridunavailable`, `lastadmin`, `statesunknown`, `orderunset`, `orderincomplete`, `homeloading`, `homeerror`, `nosessions`, `nothingscheduled`, `quietweek`, `endedtoday`, `live`, `nocontent`, `noteam` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a
@@ -359,6 +359,55 @@ rather than measuring against the page behind it. Two categories are reported
 without failing, each for a stated reason rather than as a list of instances:
 an inactive control, which WCAG 1.4.3 exempts, and a frozen classification
 hue, which the VISUAL programme has not decided to move.
+
+## Home
+
+Two screens behind one URL: `/` dispatches to the coach home or the parent
+dashboard on `sessions.create`, so `caps=coach` and `caps=parent` are two
+different screens rather than two variants of one. (`viewer` holds no
+coaching write either, so it is the dashboard too, which is why the coach
+home's own read only branches are not reachable from the harness or from the
+product; see below.)
+
+Its reads are the sessions, drills and templates every other harness screen
+reads, so its states are NAMED for Home and the stub answers them only while
+Home is the mounted screen, the same branch `useProfiles` takes for the Users
+screen: making `loading` hold the sessions read would move Sessions, Players
+and the admin screens, and the Teams removal dialog counts sessions per team.
+Off Home every read answers exactly what it always answered, so no other
+screen's shot moves. On Home the default club gains one venue on the first
+session, one template in What's new, an adaptation on each drill and one
+past night on a team no admin entry counts, which is what gives the parent
+dashboard a Last session, a Practice at home and a programme to render.
+
+Nine states are its own. `homeloading` and `homeerror` are the page level
+gate and the failed read, on either home. `nosessions` is a club with none:
+the coach's welcome hero with its three first steps, and the parent's No
+sessions yet card. `nothingscheduled` is a coach whose sessions are all past.
+`quietweek` puts the next session beyond the seven day window, so the hero
+counts down while the week list says the week is empty. `endedtoday` is a
+night that finished earlier today, still listed and marked with the ended
+Badge and never the hero. `live` is the signed in coach's own session being
+driven now, and it has to be their own: the hero leads with the coach's own
+next training before the club's, so another coach's live session sits in the
+week list under tomorrow's own hero and "Live now" never renders; the first
+version of that fixture photographed its absence under a name claiming it.
+`nocontent` empties What's new. `noteam` is a parent the club has not placed,
+read by the team scope alone. `longnames` is reused and means what it means
+everywhere: a session name, a focus line and a venue at the length a club
+would really make them, beside the long team names the other screens carry.
+
+Two of the coach home's branches are unreachable and are recorded rather
+than photographed under a name: the schedule framing for a member without
+`sessions.create` and the Watch live quick action. Both sit behind `canPlan`
+being false, and a member for whom it is false is dispatched to the parent
+dashboard before the coach home renders. They are defence in depth in the
+route and nothing here can reach them.
+
+The `endedtoday` fixture starts at one minute past midnight for ten minutes,
+so it has ended whenever the harness is opened after ten past midnight local
+time; inside those ten minutes the state's proof fails honestly rather than
+photographing a session that is still running.
 
 ## Admin Users and Admin Teams
 

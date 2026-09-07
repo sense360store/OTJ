@@ -513,6 +513,9 @@ summary:focus-visible,
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-16);
   flex-wrap: wrap; margin-bottom: var(--space-24); }
 .page-head h1, .page-head h2 { font-size: var(--text-3xl); font-weight: 800; }
+/* The eyebrow slot's own gap to the title, so a caller does not set it on
+   the h1 inline. Home is the first PageHeader caller with an eyebrow. */
+.page-head .eyebrow { margin-bottom: var(--space-4); }
 .page-head .sub { color: var(--slate); margin-top: var(--space-4); font-size: var(--text-md); }
 .page-head-acts { display: flex; align-items: center; gap: var(--space-8); flex-wrap: wrap; }
 .row { display: flex; align-items: center; gap: var(--space-8); }
@@ -650,6 +653,11 @@ summary:focus-visible,
   transition: transform var(--dur-fast), box-shadow var(--dur-fast), border-color var(--dur-fast); }
 .drill-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); border-color: color-mix(in srgb, var(--navy) 25%, var(--line)); }
 .drill-card .dc-body { padding: var(--space-12) var(--space-12) var(--space-12); display: flex; flex-direction: column; gap: var(--space-8); flex: 1; }
+/* The tag row: a classification tag beside the duration pill. Under the
+   phone grid below a card is about 156px wide and the pair does not fit on
+   one line, so the pill was clipped at the card's edge; it wraps beneath the
+   tag instead. Seen on Home's What's new at 360, and the Library shares it. */
+.drill-card .dc-body .row { flex-wrap: wrap; row-gap: var(--space-4); }
 .dc-corner-strip { height: 4px; }
 .drill-card h3 { font-size: var(--text-md); font-weight: 700; line-height: 1.25; }
 .dc-meta { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: auto; }

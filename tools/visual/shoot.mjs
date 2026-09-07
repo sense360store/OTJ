@@ -71,6 +71,26 @@ const SHOTS = [
   // Every primitive and state in one render.
   ...[390, 1280].map((w) => ({ screen: 'primitives', w })),
 
+  /* ---- VISUAL-02, Home --------------------------------------------------
+     The two screens behind one URL. The default coach and parent renders
+     are already shot at every width above (Home is a VISUAL-01 acceptance
+     surface); this is the STATE MATRIX each of the two owns, at a phone
+     width and a desktop width, both themes. Every one is the screen's own
+     branch, reached through what the reads answer, never drawn. The coach
+     states run against `coach`, which holds the fullest quick action row;
+     the parent states against `parent`, which is the dashboard. */
+  ...['homeloading', 'homeerror', 'nosessions', 'nothingscheduled', 'quietweek', 'endedtoday', 'live', 'nocontent'].flatMap(
+    (state) => [390, 1280].map((w) => ({ screen: 'home', caps: 'coach', state, w })),
+  ),
+  ...['homeloading', 'homeerror', 'nosessions', 'endedtoday', 'noteam'].flatMap((state) =>
+    [390, 1280].map((w) => ({ screen: 'home', caps: 'parent', state, w })),
+  ),
+  // The strings a club chooses at the length a club would really make them:
+  // a session name, a focus line, a venue and the long team names. Shot at
+  // the narrowest phone too, because that is where a hero title breaks or
+  // pushes the card wide.
+  ...['coach', 'parent'].flatMap((caps) => [360, 390, 1280].map((w) => ({ screen: 'home', caps, state: 'longnames', w }))),
+
   /* ---- VISUAL-02, Registered players ---------------------------------
      The wave's primary acceptance surface, and the one that carries the two
      primitives VISUAL-01 defined and could not accept: the table with its
@@ -479,7 +499,17 @@ const REACHED_STATE = {
   longnames: async (page, s) =>
     s.screen === 'feedback'
       ? visible(page, '.fb-title:has-text("Sessionplannerrecalculates")')
-      : visible(page, '.activity-item:has-text("Fotheringay-Wallington-Smythe")'),
+      : s.screen === 'home'
+        ? // Home's own long strings, on whichever of the two homes rendered:
+          // the coach's hero title or the parent's row title, both carrying
+          // the long session name, and the long venue beside it.
+          page.evaluate(
+            () =>
+              [...document.querySelectorAll('.hero h2, .psn-body > b')].some((el) =>
+                (el.textContent ?? '').includes('with the Trojans joining for the second half'),
+              ) && (document.body.textContent ?? '').includes('Community Sports Hub'),
+          )
+        : visible(page, '.activity-item:has-text("Fotheringay-Wallington-Smythe")'),
   history: '.modal .history-item',
   // What this state alone produces: the press was made and NOTHING arrived.
   // The ordinary feed answers the same press with twelve more rows, so this
@@ -514,6 +544,58 @@ const REACHED_STATE = {
   // by length. */
   longclub: (page) => brandRendered(page, { name: BRAND.longClub, motto: BRAND.motto }),
   longmotto: (page) => brandRendered(page, { name: BRAND.club, motto: BRAND.longMotto }),
+  /* ---- Home ---- */
+  // The page level gate and the failed read, on either home: the labelled
+  // spinner or the announced error, and NO page title behind it.
+  homeloading: async (page) =>
+    page.evaluate(() => !!document.querySelector('.content > .loading[role="status"]') && !document.querySelector('h1')),
+  homeerror: async (page) =>
+    page.evaluate(() => !!document.querySelector('.content > .state-error[role="alert"]') && !document.querySelector('h1')),
+  // Each of the two homes has its own empty: the coach's welcome hero with
+  // its three first steps, and the parent's No sessions yet card. Which is
+  // proved follows the capability set the shot was taken under.
+  nosessions: async (page, s) =>
+    s.caps === 'parent'
+      ? visible(page, '.parent-section h2:has-text("No sessions yet")')
+      : page.evaluate(
+          () =>
+            (document.querySelector('.hero h2')?.textContent ?? '') === 'Welcome to the Training Hub' &&
+            document.querySelectorAll('.hero-acts .btn').length === 3,
+        ),
+  nothingscheduled: async (page) =>
+    page.evaluate(
+      () =>
+        (document.querySelector('.hero h2')?.textContent ?? '') === 'Nothing scheduled yet' &&
+        document.querySelectorAll('.hero-acts .btn').length === 1,
+    ),
+  // The hero counts down past the week AND the week list is empty, which is
+  // the pair this state exists to show together.
+  quietweek: async (page) =>
+    page.evaluate(
+      () =>
+        /In \d+ days/.test(document.querySelector('.hero .eyebrow')?.textContent ?? '') &&
+        !!document.querySelector('.week-empty') &&
+        !document.querySelector('.week-row'),
+    ),
+  // The ended Badge on a row, and on the coach home that row is NOT the
+  // hero: the hero is tomorrow's session.
+  endedtoday: async (page, s) =>
+    page.evaluate(
+      (parent) =>
+        !!document.querySelector('.badge:has(.badge-dot)') &&
+        [...document.querySelectorAll('.badge')].some((b) => (b.textContent ?? '').includes('Ended earlier today')) &&
+        (parent || (document.querySelector('.hero h2')?.textContent ?? '') === 'Titans Tuesday'),
+      s.caps === 'parent',
+    ),
+  live: async (page) =>
+    page.evaluate(
+      () =>
+        (document.querySelector('.hero .eyebrow')?.textContent ?? '').includes('Live now') &&
+        (document.querySelector('.hero h2')?.textContent ?? '') === 'Titans Tuesday' &&
+        !!document.querySelector('.hero-acts .btn:nth-child(2) svg'),
+    ),
+  nocontent: '.empty:has-text("Nothing here yet")',
+  noteam: '.note-info:has-text("No team set yet")',
 }
 
 async function visible(page, selector) {

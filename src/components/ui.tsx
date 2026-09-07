@@ -376,14 +376,41 @@ export function MediaAttribution({ media, style }: { media?: MediaItem | null; s
 }
 
 /* ---- drill card ------------------------------------------------ */
+/* Which keys activate a card that is a control. A native button answers
+   Enter and Space; a card with role="button" has to answer the same two, or
+   the keyboard path stops at the card. Kept pure so the rule is testable
+   without a DOM (src/routes/home.screens.test.tsx); the browser half is
+   driven in tools/visual/checks.mjs. */
+export function cardKeyActivates(key: string): boolean {
+  return key === 'Enter' || key === ' '
+}
+
 export function DrillCard({ drill, onClick, action }: { drill: Drill; onClick?: () => void; action?: ReactNode }) {
   const mediaById = useMediaMap()
   const media = drill.mediaId ? mediaById[drill.mediaId] : undefined
   // An unclassified drill gets a neutral strip and its topic tags in the
   // corner slot, never a defaulted corner.
   const c = drill.corner ? CORNERS[drill.corner] : null
+  // A card that opens something is a control, so it is reachable by Tab and
+  // activated by Enter or Space, and it takes the shared focus ring through
+  // the element level [tabindex] rule. It was a div with an onClick, which a
+  // keyboard could not reach on any of the four screens that render it. A
+  // card with no onClick stays inert and out of the tab order.
+  const control = onClick
+    ? {
+        role: 'button' as const,
+        tabIndex: 0,
+        onKeyDown: (e: ReactKeyboardEvent<HTMLDivElement>) => {
+          if (e.target !== e.currentTarget) return
+          if (cardKeyActivates(e.key)) {
+            e.preventDefault()
+            onClick()
+          }
+        },
+      }
+    : {}
   return (
-    <div className="drill-card" onClick={onClick}>
+    <div className="drill-card" onClick={onClick} {...control}>
       <div className="dc-corner-strip" style={{ background: c ? c.color : 'var(--line)' }}></div>
       <div style={{ padding: 0 }}>
         <MediaThumb media={media} />

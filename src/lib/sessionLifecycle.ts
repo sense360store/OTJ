@@ -82,6 +82,13 @@ export const LIFECYCLE_SCOPE_LABELS: Record<LifecycleScope, string> = {
 
 export const DEFAULT_LIFECYCLE_SCOPE: LifecycleScope = 'upcoming'
 
+// The one word a row in the endedToday state carries, shared by the coach
+// Home's week list and the parent dashboard's This week so the two screens
+// say it one way; both render it as a Badge, a dot plus the word, because a
+// finished night is a STATE of the row rather than a tint. Sessions carries
+// the same words on its card and is not yet on this constant.
+export const ENDED_TODAY_LABEL = 'Ended earlier today'
+
 // The smallest thing anything needs to be placed in time.
 //
 // TWO SHAPES, ONE RULE, exactly as ./eventKind reads a session's `name`
