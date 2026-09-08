@@ -52,8 +52,11 @@ const MINE = session({ id: 's-mine', name: 'Titans Tuesday', coachId: ME, date: 
 const THEIRS = session({ id: 's-theirs', name: 'Trojans Thursday', coachId: THEM, date: inDays(3), teamIds: ['trojans'] })
 const CLUB = session({ id: 's-club', name: 'Club Saturday', coachId: '', date: inDays(4), teamIds: [] })
 const PAST = session({ id: 's-past', name: 'Last Tuesday', coachId: ME, date: inDays(-6) })
-// Finished earlier today: started at one minute past midnight for ten
-// minutes, so it has ended whenever this runs after ten past midnight.
+// Finished earlier today: one minute past midnight for ten minutes. Its
+// test PINS THE CLOCK to midday, because between local midnight and 00:11
+// this session has not ended yet and the assertion would fail on a correct
+// implementation. Found by the exact head Codex review; an eleven minute
+// window a day is exactly the flake that gets rerun rather than read.
 const ENDED = session({
   id: 's-ended',
   name: 'Gladiators early',
@@ -126,7 +129,13 @@ beforeEach(() => {
   state.caps = new Set(['sessions.create'])
   state.myTeams = { teamIds: ['titans'], allTeams: false }
 })
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  // The ended night's test pins the clock; every other test runs on the
+  // real one, so it is released here rather than in that test's own body,
+  // where a failing assertion would skip it.
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 /* ---- the vocabulary ------------------------------------------------- */
 
@@ -193,6 +202,12 @@ describe('the Sessions screen draws with the shared vocabulary', () => {
   })
 
   it('shows a finished night as a Badge, a dot plus the word, never a tinted pill', () => {
+    // Midday TODAY, so every date built by inDays stays exactly as far
+    // ahead or behind as it was, and only the hour is made deterministic.
+    const noon = new Date()
+    noon.setHours(12, 0, 0, 0)
+    vi.useFakeTimers()
+    vi.setSystemTime(noon)
     state.sessions = [ENDED, MINE]
     const out = html()
     expect(out).toContain(`<span class="badge"><span class="badge-dot" aria-hidden="true"></span>${ENDED_TODAY_LABEL}</span>`)
