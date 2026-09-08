@@ -21,6 +21,7 @@ order where each one fails before the next can do damage.
 | `0050_bulk_delete_players` | `20260823065041` | `bulk_delete_players` | 2026-08-23 |
 | `0051_team_sort_order` | `20260902150212` | `team_sort_order` | 2026-09-02 |
 | `0052_atomic_team_order` | `20260904174142` | `atomic_team_order` | 2026-09-04 |
+| `0053_venue_layouts` | `20260908094005` | `venue_layouts` | 2026-09-08 |
 
 `0050` was applied from the reviewed PLAYERS-01 branch commit
 `2d1de99827064f6856374bfc3c094cf50ae1cc3f` (PR #191) before that branch merged,
@@ -219,7 +220,7 @@ hosted teams carries a null position, which is the "no backfill" claim on the
 live rows. Its `expected_previous_version` stays `20260823065041` /
 `bulk_delete_players`, as every entry's does. The content-sharing deploy pin
 moved to `20260902150212` in the change that recorded that apply, and has since
-moved on to `20260904174142` (see `EXPECTED_LAST_MIGRATION` below).
+moved on to `20260908094005` (see `EXPECTED_LAST_MIGRATION` below).
 
 An earlier dispatch of the workflow that afternoon, run 33643220492, was
 submitted with the migration input left on the dropdown's first entry,
@@ -374,13 +375,21 @@ database did not have. The workflow was therefore run against the reviewed
 
 ## Reviewed, registered, not yet applied
 
-`0053_venue_layouts` (coaching workflow COACH-5, migration M2), registered
-against `20260904174142` / `atomic_team_order`, the hosted head read live on
+Nothing. Every registered migration is applied, and the hosted head is
+`20260908094005` / `venue_layouts`.
+
+`0053_venue_layouts` (coaching workflow COACH-5, migration M2) sat here between
+its review and its apply on 8 September 2026, registered against
+`20260904174142` / `atomic_team_order`, the hosted head read live on
 7 September 2026, with the idempotency key `otj:migration:0053_venue_layouts`.
-It is the only reviewed migration not yet applied. What it does is under
-"What `0053` does" below; the apply is the human gate its pull request waits
-on, and it goes BEFORE the frontend from the same change is deployed, because
-the new screens read a column and a table the database does not yet have.
+It was applied by workflow run 34211218951 from `02762287925964c5379739e8805caf127bb57ca8`,
+which is `main` carrying the COACH-5 merge of pull request #231, and is in the
+applied table above. What it does is under "What `0053` does" below. The
+frontend from the same change had already deployed from that merge, so the two
+new `club.manage` screens were reading a column and a table the database did
+not yet have for the window between the merge and the apply; the coach facing
+paths were unaffected, because the age group read stands alone and every create
+path falls back to the label it always used.
 
 `0051_team_sort_order` sat here between its review and its apply on 2 September
 2026, and `0052_atomic_team_order` between its review and its apply on
@@ -964,8 +973,8 @@ Until that lands, the content-sharing Edge Function deploy workflow fails
 closed on its own ledger gate. That is intended: it is far safer than a check
 that passes regardless.
 
-**Reconciled.** `EXPECTED_LAST_MIGRATION` is `20260904174142`
-(`0052_atomic_team_order`), matching the hosted head applied on 4 September
+**Reconciled.** `EXPECTED_LAST_MIGRATION` is `20260908094005`
+(`0053_venue_layouts`), matching the hosted head applied on 8 September
 2026. Each move is its own reviewed change rather than being folded into
 anything else, and the gate fails closed between an apply and its
 reconciliation, which is intended. The apply evidence behind the move is

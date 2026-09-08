@@ -545,24 +545,23 @@ Because the pre-deploy gate asserts the same constant, running the deploy before
 step 5 fails closed with nothing deployed. That is intended: it is far safer
 than a loose check that passes regardless.
 
-Current value: `20260904174142` (`0052_atomic_team_order`, applied
-2026-09-04 under its own production approval).
+Current value: `20260908094005` (`0053_venue_layouts`, applied
+2026-09-08 under its own production approval).
 
-Hosted ledger newest migration: **`20260904174142` / `atomic_team_order`**.
+Hosted ledger newest migration: **`20260908094005` / `venue_layouts`**.
 That value was read back from `supabase_migrations.schema_migrations` after the
 apply, not predicted before it, and was confirmed to be the unique newest row:
 it appears exactly once and no row is newer.
 
-0052 was applied by the gated production migration workflow, run 33901817120,
-from the reviewed commit `973de7d692569c1db495d18e9ecb6001dc7160d0` on the
-COACH-1B database branch (pull request #226), at 17:41 UTC on 4 September 2026,
-nine minutes before that branch merged. The migration adds one function,
-`public.set_team_order(uuid[], integer[])`, and nothing else: no table, no
-column, no index, no policy, no grant on any table, no capability key, no
-trigger, and no value added to any vocabulary. It writes no row, and every
-team's position was null before the apply and is null after it. Its ledger row
-carries the workflow's evidence, all of it confirmed independently before this
-constant moved:
+0053 was applied by the gated production migration workflow, run 34211218951,
+from the reviewed commit `02762287925964c5379739e8805caf127bb57ca8`, which is
+`main` carrying the COACH-5 merge of pull request #231, on 8 September 2026.
+The migration adds one column, `public.clubs.age_groups`, and one table,
+`public.venue_layouts`, with its shape predicates, its scope key, two policies
+mirroring `venues`, explicit grants and one audit trigger. It writes no row:
+every club takes the `'{}'` default and the new table is created empty. Its
+ledger row carries the workflow's evidence, all of it confirmed independently
+before this constant moved:
 
 Each fact names what established it, because the mechanisms do not cover the
 same ground and an auditor who assumes they do will trust more than was checked.
@@ -571,67 +570,82 @@ same ground and an auditor who assumes they do will trust more than was checked.
 back again for this reconciliation:**
 
 - the row is the unique newest one, recorded at the newest version, in a ledger
-  of 47 rows with exactly one row named `atomic_team_order`;
-- the **version** of the row before it is `20260902150212`. Only the version:
+  of 48 rows with exactly one row named `venue_layouts`;
+- the **version** of the row before it is `20260904174142`. Only the version:
   `assert_post` compares `second_version` against `expected_previous_version`
   and never compares `second_name`, which it reads but uses only in the failure
   message and the report table;
 - `statements` holds exactly one entry whose MD5 is
-  `8a3d8a6778e343bacd3ebacb149d5e5a`, the reviewed file with its trailing
-  newline stripped (56271 bytes). That is the strongest single fact here: what
+  `4a0ad5365bc501c370160e9d06620fda`, the reviewed file with its trailing
+  newline stripped (69853 bytes). That is the strongest single fact here: what
   production ran is the reviewed file byte for byte, not a file that merely
-  passed the same probes;
-- and, through the three registered object probes in `reviewed_migrations.py`:
-  that `public.set_team_order(uuid[], integer[])` resolves
-  (`to_regprocedure`, never a textual signature cast, for the reason 0049's
-  review found); that it is `SECURITY DEFINER` with an empty `search_path`
-  (`pg_proc.prosecdef` and `proconfig`, the expected value composed with
-  `chr(34)` because the verifier refuses a probe carrying a quote); and that
-  `authenticated` holds EXECUTE on it while `anon` does not, with `anon` tested
-  rather than inferred from `PUBLIC`.
+  passed the same probes. It was recomputed from the file in this repository
+  rather than trusted from the run log;
+- and, through the five registered object probes in `reviewed_migrations.py`:
+  that `public.clubs.age_groups` is a text array, not null, defaulting to
+  empty, read as the shape with the name so a nullable column or a different
+  element type would not satisfy it; that `public.venue_layouts` exists as an
+  ordinary table **with row level security enabled**, read from
+  `pg_class.relrowsecurity` rather than from mere presence; that
+  `venue_layouts_scope_unique` is a UNIQUE CONSTRAINT on that table rather than
+  a plain index; that `public.venue_layout_is_valid(jsonb, integer)` resolves
+  with its two argument signature (`to_regprocedure`, never a textual signature
+  cast, for the reason 0049's review found), which is what makes a four zone
+  value on a five slot row unrepresentable; and that `audit_venue_layouts()` is
+  `SECURITY DEFINER` with an empty `search_path` and is executable by neither
+  `authenticated` nor `anon`, the one place this migration is deliberately
+  stricter than `audit_venues()`.
 
 **Read back for this reconciliation only, and NOT asserted by that gate:**
 
 - `created_by` is
-  `github-actions:apply-production-migration@973de7d692569c1db495d18e9ecb6001dc7160d0`,
+  `github-actions:apply-production-migration@02762287925964c5379739e8805caf127bb57ca8`,
   naming the workflow and the commit it ran from. The gate never selects this
   column;
-- `idempotency_key` is `otj:migration:0052_atomic_team_order`, and that column
-  is UNIQUE, so the same migration cannot be applied a second time. The gate
+- `idempotency_key` is `otj:migration:0053_venue_layouts`, and that column is
+  UNIQUE, so the same migration cannot be applied a second time. The gate
   checks that key only **before** the apply, to prove the migration had not
-  already run. It carries more weight here than it did for 0051: `create or
-  replace function` is idempotent where `add column` is not, so the migration's
-  own self-verification would not refuse a second raw apply, and the ledger key
-  is what refuses a second apply through the workflow;
-- the **name** of the preceding row is `team_sort_order`. A row that kept
-  version `20260902150212` under a different name would still satisfy the
+  already run;
+- the **name** of the preceding row is `atomic_team_order`. A row that kept
+  version `20260904174142` under a different name would still satisfy the
   gate, so this half of that row's identity rests on the readback;
-- `PUBLIC` does not hold EXECUTE either. The probe tests `anon`, which is the
-  role a browser reaches PostgREST as when signed out; `PUBLIC` is the grant
-  that would have made that moot, and only the readback excludes it.
+- `PUBLIC` does not hold EXECUTE on `audit_venue_layouts()` either. The probe
+  tests `authenticated` and `anon`, which are the roles a browser reaches
+  PostgREST as; `PUBLIC` is the grant that would have made both moot, and only
+  the readback excludes it;
+- the table grants are exactly what was reviewed: `authenticated` holds DELETE,
+  INSERT, SELECT and UPDATE on `venue_layouts`, and `anon` holds nothing at
+  all. The probes above read the trigger function's privileges, not the
+  table's.
 
-Those probes are why the function's existence and its security posture sit in
+Those probes are why the objects' existence and their security posture sit in
 the gate list rather than under the readback: they are asserted on every run,
-not merely read back once. What the readback **adds**, beyond `PUBLIC` above,
-is the state 0052 promised to leave UNTOUCHED, which no probe of a newly
-created function can speak to: `public.teams` still holds five rows and none
-carries a position, which is what "writes no row" means on the live rows;
-`teams` still carries exactly its two policies and exactly its one non internal
-trigger, the audit writer; and `teams_sort_order_unique` is still `CREATE
-UNIQUE INDEX teams_sort_order_unique ON public.teams USING btree (club_id,
-sort_order) WHERE (sort_order IS NOT NULL)`, the definition 0051's apply left,
-so the last guard the function's clear-then-place is written around is the same
-guard.
+not merely read back once. What the readback **adds**, beyond `PUBLIC` and the
+table grants above, is the state 0053 promised to leave UNTOUCHED, which no
+probe of a newly created object can speak to: `public.venue_layouts` holds zero
+rows, which is what "creates the table and writes no row" means on the live
+database; both `public.clubs` rows carry `age_groups` of exactly `'{}'`, so no
+club was given a vocabulary it did not choose; and `venue_layouts` carries
+exactly its two reviewed policies and exactly its one non internal trigger, the
+audit writer.
 
-**What none of that establishes** is the other half of "0052 adds one function
-and nothing else". The probes look at that one function, and the readback at it
-and at the four things above. Neither inventories every table, column, index,
-policy or trigger. That property comes from review of the migration SQL and
-from the file's own before and after fingerprints of the team rows, their
-positions whole, the audit rows, the policies, the grants, the triggers and the
-index definition, which is what the gated production process exists to provide.
+One promise is **not** established by any readback, and saying so is the point.
+29 sessions carry a non empty `age_group` label, and a reading taken after the
+apply cannot tell that number from the number before it. That no session label
+was rewritten rests on the migration's own before and after fingerprint of the
+session age groups, taken inside the same transaction, not on anything read
+back here.
 
-The previous value, `20260902150212` / `team_sort_order` (0051), is now a
+**What none of that establishes** is the other half of "0053 adds one column
+and one table and nothing else". The probes look at those objects, and the
+readback at them and at the things above. Neither inventories every table,
+column, index, policy or trigger. That property comes from review of the
+migration SQL and from the file's own before and after fingerprints of the
+club, venue and season rows, the session age groups, the audit row count, the
+capability catalogue and the policy, grant and trigger sets of clubs, venues
+and seasons, which is what the gated production process exists to provide.
+
+The previous value, `20260904174142` / `atomic_team_order` (0052), is now a
 superseded value and is REJECTED by the gate. That is asserted directly,
 because a reconciliation that widened the constant rather than moving it would
 otherwise look identical to one that moved it. It remains the row immediately
@@ -814,7 +828,7 @@ Absolute invariants, the same ones the pre-deploy phase asserted:
 - every drill is `internal_only`;
 - every media row is `internal_only`;
 - total drill and media counts are reported;
-- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260904174142` (0052, the atomic team order writer);
+- the migration ledger's newest version is exactly `EXPECTED_LAST_MIGRATION`, currently `20260908094005` (0053, the venue layouts table and the club age group vocabulary);
 - no pg_cron job references `content_share` (the `cron` schema being absent
   satisfies this).
 
