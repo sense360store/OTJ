@@ -198,6 +198,13 @@ describe('no create path seeds coverage from the signed in coach', () => {
     expect(src).toMatch(/const ageSeeded = useRef\(!!existing \|\| !!restored\)/)
     // Once, so a later club list refetch cannot rewrite an edited draft.
     expect(src).toMatch(/if \(ageSeeded\.current \|\| !clubAgeGroups \|\| clubAgeGroups\.length === 0\) return/)
+    // And a coach's own choice settles the field. Codex's third finding:
+    // the control offers the fallback labels while the club read is in
+    // flight, so a choice made in that window was replaced by the arriving
+    // list's first entry whenever the list did not carry it. Marking the
+    // ref on a manual choice is what closes the window; without this the
+    // seed cannot tell a chosen draft from an untouched one.
+    expect(src).toMatch(/if \(k === 'ageGroup'\) ageSeeded\.current = true/)
   })
 
   it('a new draft is not remounted when the profile arrives', () => {

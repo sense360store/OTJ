@@ -709,7 +709,18 @@ function PlannerEditor({
   const readOnly = !!existing && existing.coachId !== user?.id && !caps.has('sessions.manage')
   const owner = existing ? memberById[existing.coachId] : undefined
 
-  const setField = (k: SessionFieldKey, v: string) => setSession((s) => ({ ...s, [k]: v }))
+  // A coach choosing the age group settles it, so the seed below never runs
+  // over their choice. Codex, third finding, and the race is narrow but real:
+  // while the club's list is still loading the control deliberately offers
+  // the fallback labels, so a coach can choose one BEFORE the read lands. A
+  // ref that only records whether seeding ran cannot tell that state from an
+  // untouched draft, so the arriving list replaced their choice with its
+  // first entry whenever the list did not carry the label they picked. The
+  // ref means "this field is settled", and a manual choice settles it.
+  const setField = (k: SessionFieldKey, v: string) => {
+    if (k === 'ageGroup') ageSeeded.current = true
+    setSession((s) => ({ ...s, [k]: v }))
+  }
   const setIntentions = (v: string[]) => setSession((s) => ({ ...s, intentions: v }))
   const setVenue = (v: string | null) => setSession((s) => ({ ...s, venueId: v }))
   const toggleTeam = (teamId: string) =>
