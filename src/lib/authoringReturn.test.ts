@@ -18,6 +18,8 @@ import {
   readDraftToken,
   safeReturnPath,
   dropDraft,
+  FROM_PLAN_STATE,
+  isFromPlanEntry,
   peekDraft,
   stashDraft,
   takeDraft,
@@ -245,6 +247,27 @@ describe('the read is pure and the removal is separate', () => {
     stashDraft(s, stash())
     expect(takeDraft(s, { host: 'planner', token: 'tok-1', userId: ME })).toEqual({ id: 'session-1', draft: stash().draft })
     expect(s.map.has(AUTHORING_STASH_KEY)).toBe(false)
+  })
+})
+
+// COACH-11, Codex's fifth finding. The Drill Maker's Back PUSHED the plan
+// rather than popping to the tokenised entry leaveToDraw left beneath it, so
+// history became [tokenised plan, Drill Maker, restored plan]. One browser
+// Back from the plan the coach had just got home reopened the Drill Maker,
+// and its Back then found the stash taken and rebuilt from what was saved,
+// silently discarding the draft. The marker is what tells the route it may
+// pop, and it must be true of our own push and of nothing else: an
+// unconditional pop would strand a cold or pasted link, which is the reason
+// that route wrote "never history.go(-1)" in the first place.
+describe('the marker that says the plan is one entry beneath', () => {
+  it('is true of the state leaveToDraw pushes', () => {
+    expect(isFromPlanEntry(FROM_PLAN_STATE)).toBe(true)
+  })
+
+  it('is false of every state a cold, pasted or unrelated entry carries', () => {
+    for (const other of [null, undefined, {}, { otjFromPlan: false }, { otjFromPlan: 'yes' }, 'otjFromPlan', 0, [], { from: 'plan' }]) {
+      expect(isFromPlanEntry(other), JSON.stringify(other) ?? 'undefined').toBe(false)
+    }
   })
 })
 

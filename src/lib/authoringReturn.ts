@@ -149,6 +149,26 @@ export function takeDraft<D>(
   return found
 }
 
+// The marker leaveToDraw puts on the DRILL MAKER'S OWN history entry, so the
+// way back can POP to the plan entry beneath rather than push a second one.
+//
+// Why a marker rather than always popping: this route is deep linkable, and on
+// a cold tab there is nothing behind it, so an unconditional history.go(-1)
+// leaves a full screen page whose only control does nothing. The marker is set
+// by our own push and by nothing else, so its presence IS the proof that the
+// tokenised plan entry is immediately beneath.
+//
+// Why popping matters: leaveToDraw leaves [tokenised plan, Drill Maker]. A
+// Back that PUSHED made [tokenised plan, Drill Maker, restored plan], and the
+// coach's next browser Back from their restored plan reopened the Drill Maker,
+// whose own Back then found the stash already taken and rebuilt the plan from
+// what was saved, silently discarding the draft they had just carried back.
+export const FROM_PLAN_STATE = { otjFromPlan: true } as const
+
+export function isFromPlanEntry(state: unknown): boolean {
+  return !!state && typeof state === 'object' && (state as { otjFromPlan?: unknown }).otjFromPlan === true
+}
+
 export function withDraftToken(path: string, token: string): string {
   return `${path}${path.includes('?') ? '&' : '?'}${DRAFT_PARAM}=${encodeURIComponent(token)}`
 }

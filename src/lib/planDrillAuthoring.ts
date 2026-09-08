@@ -22,7 +22,14 @@
 // editor renders the affordances.
 // =====================================================================
 import type { Activity, Phase } from './data'
-import { drawPath, stashDraft, withDraftToken, type AuthoringHost, type StorageLike } from './authoringReturn'
+import {
+  drawPath,
+  FROM_PLAN_STATE,
+  stashDraft,
+  withDraftToken,
+  type AuthoringHost,
+  type StorageLike,
+} from './authoringReturn'
 
 // The placeholder title both hosts give a custom activity and the title
 // resolver falls back to. Spelled once here so the preset rule and the
@@ -112,8 +119,10 @@ export function leaveToDraw<D>({
   // The host's own address, without the token; the token is appended here.
   returnPath: string
   drillId: string
-  // The router's navigate: a push by default, a replace when asked.
-  navigate: (to: string, options?: { replace: boolean }) => void
+  // The router's navigate: a push by default, a replace when asked. It also
+  // carries the history state for the pushed entry, which is what lets the
+  // Drill Maker's Back POP to the plan beneath rather than push a second one.
+  navigate: (to: string, options?: { replace?: boolean; state?: unknown }) => void
   token: string
 }): 'left' | 'stash_failed' {
   if (!userId) return 'stash_failed'
@@ -121,6 +130,6 @@ export function leaveToDraw<D>({
   if (!stashed) return 'stash_failed'
   const returnTo = withDraftToken(returnPath, token)
   navigate(returnTo, { replace: true })
-  navigate(drawPath(drillId, returnTo))
+  navigate(drawPath(drillId, returnTo), { state: FROM_PLAN_STATE })
   return 'left'
 }

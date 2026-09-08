@@ -190,6 +190,19 @@ describe('no COACH-12 or COACH-13 semantics have leaked in', () => {
     // takeDraft is the combined one shot and has no business in a render.
     expect(src).not.toMatch(/takeDraft/)
   })
+
+  it('the Drill Maker pops back to the plan, and only on its own push', () => {
+    // Codex, fifth finding. Popping is what stops the stranded tokenised
+    // entry; the marker is what stops a cold or pasted link popping into
+    // whatever preceded the app. Both halves must be present: a pop with no
+    // marker check strands a deep link, and a marker check that still
+    // pushes fixes nothing.
+    const src = code(read('routes/DrillDiagramEditor.tsx'))
+    expect(src).toMatch(/const cameFromPlan = !!returnTo && isFromPlanEntry\(location\.state\)/)
+    expect(src).toMatch(/if \(cameFromPlan\) navigate\(-1\)/)
+    // And the push that put it there carries the marker.
+    expect(code(read('lib/planDrillAuthoring.ts'))).toMatch(/drawPath\(drillId, returnTo\), \{ state: FROM_PLAN_STATE \}/)
+  })
 })
 
 describe('what this file cannot catch', () => {

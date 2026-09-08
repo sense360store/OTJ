@@ -18,7 +18,7 @@ import {
   quickDrillPreset,
   STASH_FAILED_NOTE,
 } from './planDrillAuthoring'
-import { AUTHORING_STASH_KEY, DRAFT_PARAM, RETURN_PARAM, type StorageLike } from './authoringReturn'
+import { AUTHORING_STASH_KEY, DRAFT_PARAM, FROM_PLAN_STATE, RETURN_PARAM, type StorageLike } from './authoringReturn'
 import type { Activity } from './data'
 
 const custom: Activity = { phase: 'Skill', title: CUSTOM_ACTIVITY_TITLE, duration: 10 }
@@ -127,7 +127,7 @@ describe('leaveToDraw', () => {
 
   it('stashes the draft under a fresh token, then opens the Drill Maker with a return address carrying it', () => {
     const s = storage()
-    const navigate = vi.fn<(to: string, options?: { replace: boolean }) => void>()
+    const navigate = vi.fn<(to: string, options?: { replace?: boolean; state?: unknown }) => void>()
     const outcome = leaveToDraw({
       storage: s,
       userId: 'coach-me',
@@ -148,14 +148,19 @@ describe('leaveToDraw', () => {
     // the token. A push alone left the bare host beneath, and popping to it
     // took nothing and lost the plan.
     const returnTo = `/planner?sessionId=session-1&${DRAFT_PARAM}=tok-1`
+    // The pushed entry carries FROM_PLAN_STATE, which is the only proof the
+    // Drill Maker's Back has that the plan sits immediately beneath it and
+    // so may be POPPED to rather than pushed a second time. Without it Back
+    // pushed a third entry, and the coach's next browser Back reopened the
+    // Drill Maker and lost the draft they had just carried home.
     expect(navigate.mock.calls).toEqual([
       [returnTo, { replace: true }],
-      [`/drill/d-new/diagram?${RETURN_PARAM}=${encodeURIComponent(returnTo)}`],
+      [`/drill/d-new/diagram?${RETURN_PARAM}=${encodeURIComponent(returnTo)}`, { state: FROM_PLAN_STATE }],
     ])
   })
 
   it('never navigates when the draft could not be stashed, and names the failure', () => {
-    const navigate = vi.fn<(to: string, options?: { replace: boolean }) => void>()
+    const navigate = vi.fn<(to: string, options?: { replace?: boolean; state?: unknown }) => void>()
     const outcome = leaveToDraw({
       storage: null,
       userId: 'coach-me',
@@ -174,7 +179,7 @@ describe('leaveToDraw', () => {
 
   it('stashes nothing and goes nowhere without a signed in user', () => {
     const s = storage()
-    const navigate = vi.fn<(to: string, options?: { replace: boolean }) => void>()
+    const navigate = vi.fn<(to: string, options?: { replace?: boolean; state?: unknown }) => void>()
     expect(
       leaveToDraw({
         storage: s,

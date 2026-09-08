@@ -20,7 +20,7 @@
 // was sent. An edit made while that was in flight is kept and leaves the editor
 // unsaved, which is the honest answer: the newer drawing is not stored yet.
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useDrill, useDrillDiagram, useMyCapabilities, useUpdateDrillDiagram } from '../lib/queries'
@@ -59,7 +59,7 @@ import {
   type DiagramEditorState,
 } from '../lib/drillDiagramEditor'
 import { diagramEditDecision } from '../lib/drillDiagramRights'
-import { RETURN_PARAM, safeReturnPath } from '../lib/authoringReturn'
+import { isFromPlanEntry, RETURN_PARAM, safeReturnPath } from '../lib/authoringReturn'
 import { goalHitRect, goalRect, HIT_MIN, pointerFraction, surfaceAspect, toView, viewBox, zoneHitBand } from '../lib/drillDiagramGeometry'
 import { DiagramSurfaceBackdrop, DiagramElementShape } from '../components/DrillDiagramView'
 import { isDrag } from '../lib/tacticsBoard'
@@ -667,16 +667,17 @@ function EditorBody({
   drillId,
   title,
   initial,
-  backTo,
+  onBack,
   backLabel,
 }: {
   drillId: string
   title: string
   initial: DrillDiagram | null
-  backTo: string
+  // The whole Back decision, made once by the route: a plan that pushed this
+  // entry is POPPED back to, anything else is navigated to.
+  onBack: () => void
   backLabel: string
 }) {
-  const navigate = useNavigate()
   const [state, dispatch] = useReducer(editorReducer, initial, initEditor)
   const [armed, setArmed] = useState<DiagramElementType | null>(null)
   const [errorMessage, setError] = useState<string | null>(null)
@@ -721,7 +722,7 @@ function EditorBody({
     )
   }
 
-  const back = () => navigate(backTo)
+  const back = onBack
 
   return (
     <>
@@ -799,6 +800,7 @@ export const BACK_TO_PLAN = 'Back to the plan'
 export function DrillDiagramEditor() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const [search] = useSearchParams()
   const { user } = useAuth()
   const { caps } = useMyCapabilities()
@@ -834,16 +836,37 @@ export function DrillDiagramEditor() {
   // and Back is what it always was.
   const returnTo = safeReturnPath(search.get(RETURN_PARAM))
   const backLabel = returnTo ? BACK_TO_PLAN : BACK_TO_DRILL
-  const backToDrill = () => navigate(returnTo ?? (id ? `/drill/${id}` : '/library'))
+  // COACH-11, second half. Where Back goes is settled above; HOW it gets
+  // there is settled here, once, for every state this route can be in.
+  //
+  // leaveToDraw leaves [tokenised plan, Drill Maker] and marks the entry it
+  // pushed. Pushing the plan again made [tokenised plan, Drill Maker,
+  // restored plan], so the coach's next browser Back from the plan they had
+  // just got back reopened the Drill Maker, and ITS Back then found the
+  // stash already taken and rebuilt the plan from what was saved. The draft
+  // they carried back was gone, silently. Popping leaves the coach where
+  // they actually were before the plan, and the forward entry is the Drill
+  // Maker, which is what a browser's Back and Forward are supposed to mean.
+  //
+  // Only on OUR OWN push, which the marker proves: this route is deep
+  // linkable, and on a cold tab there is nothing behind it, so an
+  // unconditional -1 leaves a full screen page whose only control does
+  // nothing. A pasted or bookmarked address carries no marker and navigates
+  // exactly as it always did.
+  const cameFromPlan = !!returnTo && isFromPlanEntry(location.state)
+  const back = () => {
+    if (cameFromPlan) navigate(-1)
+    else navigate(returnTo ?? (id ? `/drill/${id}` : '/library'))
+  }
   if (isLoading || diagramLoading)
     return (
-      <Frame title="Drill Maker" onBack={backToDrill} backLabel={backLabel}>
+      <Frame title="Drill Maker" onBack={back} backLabel={backLabel}>
         <Loading />
       </Frame>
     )
   if (!drill)
     return (
-      <Frame title="Drill Maker" onBack={() => navigate(returnTo ?? '/library')} backLabel={returnTo ? BACK_TO_PLAN : 'Back to the library'}>
+      <Frame title="Drill Maker" onBack={back} backLabel={returnTo ? BACK_TO_PLAN : 'Back to the library'}>
         {isError ? <ErrorNote /> : <Empty icon={Icon.grid} title="Drill not found">It may have been removed.</Empty>}
       </Frame>
     )
@@ -851,7 +874,7 @@ export function DrillDiagramEditor() {
   // "no diagram" when the drill may in fact have one would let a save wipe it.
   if (diagramError && diagram === undefined)
     return (
-      <Frame title={drill.title} onBack={backToDrill} backLabel={backLabel}>
+      <Frame title={drill.title} onBack={back} backLabel={backLabel}>
         <ErrorNote />
       </Frame>
     )
@@ -871,7 +894,7 @@ export function DrillDiagramEditor() {
     // answer is "not yours" or "the club may not redraw England Football
     // content", because only one of those has anything they can do about it.
     return (
-      <Frame title={drill.title} onBack={backToDrill} backLabel={backLabel}>
+      <Frame title={drill.title} onBack={back} backLabel={backLabel}>
         <Empty icon={Icon.lock} title="This drill's diagram cannot be changed">
           {decision.reason ?? ''}
         </Empty>
@@ -884,7 +907,7 @@ export function DrillDiagramEditor() {
       drillId={drill.id}
       title={drill.title}
       initial={diagram ?? null}
-      backTo={returnTo ?? `/drill/${drill.id}`}
+      onBack={back}
       backLabel={backLabel}
     />
   )
