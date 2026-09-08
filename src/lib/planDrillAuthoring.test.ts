@@ -15,10 +15,13 @@ import {
   applyCreatedDrill,
   CUSTOM_ACTIVITY_TITLE,
   leaveToDraw,
+  plannerDraft,
   quickDrillPreset,
+  readPlannerDraft,
   STASH_FAILED_NOTE,
 } from './planDrillAuthoring'
 import { AUTHORING_STASH_KEY, DRAFT_PARAM, FROM_PLAN_STATE, RETURN_PARAM, type StorageLike } from './authoringReturn'
+import { blankSession } from './data'
 import type { Activity } from './data'
 
 const custom: Activity = { phase: 'Skill', title: CUSTOM_ACTIVITY_TITLE, duration: 10 }
@@ -195,5 +198,53 @@ describe('leaveToDraw', () => {
     ).toBe('stash_failed')
     expect(s.map.size).toBe(0)
     expect(navigate).not.toHaveBeenCalled()
+  })
+})
+
+describe('the dated planner draft envelope', () => {
+  // The planner seeds two fields from reads that answer after its first
+  // render. Whether each had been settled when the coach left is a fact
+  // about the draft, and it used to be inferred from the draft existing at
+  // all, which reads an unanswered read as a settled field.
+  const session = blankSession('coach-me')
+
+  it('carries the session and both flags, and copies the flags rather than aliasing them', () => {
+    const seeded = { coverage: true, age: false }
+    const draft = plannerDraft(session, seeded)
+    expect(draft.session).toBe(session)
+    expect(draft.seeded).toEqual({ coverage: true, age: false })
+    seeded.age = true
+    expect(draft.seeded.age).toBe(false)
+  })
+
+  it('round trips through the JSON the stash is written as', () => {
+    const draft = plannerDraft({ ...session, name: 'Tuesday' }, { coverage: false, age: true })
+    const back = readPlannerDraft(JSON.parse(JSON.stringify(draft)))
+    expect(back).toEqual(draft)
+  })
+
+  it('answers no draft for anything that is not this envelope, and never invents a flag', () => {
+    // A bare session is what the stash held before this envelope existed,
+    // and the stash outlives a reload of the tab, so a bundle can meet one.
+    // Reading it as a draft with both flags absent would be exactly the
+    // defect the flags replaced, only silent.
+    for (const bad of [
+      null,
+      undefined,
+      'a string',
+      7,
+      {},
+      { session },
+      { seeded: { coverage: true, age: true } },
+      { session, seeded: {} },
+      { session, seeded: { coverage: true } },
+      { session, seeded: { coverage: 'yes', age: true } },
+      { session, seeded: { coverage: true, age: 1 } },
+      { session, seeded: null },
+      { session: 'not a session', seeded: { coverage: true, age: true } },
+      session,
+    ]) {
+      expect(readPlannerDraft(bad), JSON.stringify(bad) ?? String(bad)).toBeNull()
+    }
   })
 })

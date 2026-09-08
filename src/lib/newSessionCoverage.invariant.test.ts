@@ -170,11 +170,14 @@ describe('no create path seeds coverage from the signed in coach', () => {
     // suppresses the seed is editing a STORED session, whose coverage is
     // the answer: a one team session must never widen for being opened.
     const src = code(read('routes/Planner.tsx'))
-    // COACH-11 adds the second suppression: a draft restored from the
-    // Drill Maker round trip is one the coach already had in hand, so a
-    // coverage they cleared before drawing stays cleared. Nothing else
-    // suppresses it, which the exact form pins.
-    expect(src).toMatch(/const coverageSeeded = useRef\(!!existing \|\| !!restored\)/)
+    // COACH-11 adds the second suppression, and it is the flag the restored
+    // draft CARRIES rather than the draft's existence. A coverage the coach
+    // cleared before drawing stays cleared; a coach who left while the team
+    // read was still in flight comes back to a draft that still seeds when
+    // it answers. Reading every restored draft as settled left that session
+    // covering nobody, saveable, with nothing on screen saying so. Nothing
+    // else suppresses it, which the exact form pins.
+    expect(src).toMatch(/const coverageSeeded = useRef\(!!existing \|\| restored\?\.seeded\.coverage === true\)/)
     // Once. A later teams refetch, a team added or a team deleted must
     // not rewrite a draft the coach has since edited.
     expect(src).toMatch(/if \(coverageSeeded\.current \|\| teams\.length === 0\) return/)
@@ -194,8 +197,13 @@ describe('no create path seeds coverage from the signed in coach', () => {
     // draw silently changed their age group. The two seeds now suppress on
     // exactly the same pair, which is what this pins; they are separate
     // tests so a failure names which seed moved.
+    //
+    // The restored half is the flag the draft carries, for the reason the
+    // coverage seed states: a coach who left before the club's list answered
+    // must still get it when it does, or the session keeps the legacy label
+    // for ever.
     const src = code(read('routes/Planner.tsx'))
-    expect(src).toMatch(/const ageSeeded = useRef\(!!existing \|\| !!restored\)/)
+    expect(src).toMatch(/const ageSeeded = useRef\(!!existing \|\| restored\?\.seeded\.age === true\)/)
     // Once, so a later club list refetch cannot rewrite an edited draft.
     expect(src).toMatch(/if \(ageSeeded\.current \|\| !clubAgeGroups \|\| clubAgeGroups\.length === 0\) return/)
     // And a coach's own choice settles the field. Codex's third finding:
@@ -205,6 +213,17 @@ describe('no create path seeds coverage from the signed in coach', () => {
     // ref on a manual choice is what closes the window; without this the
     // seed cannot tell a chosen draft from an untouched one.
     expect(src).toMatch(/if \(k === 'ageGroup'\) ageSeeded\.current = true/)
+  })
+
+  it('the draft that goes to the Drill Maker carries both settled flags out', () => {
+    // A flag that is read on the way back but never written on the way out
+    // is a flag that is always false, which would seed over a coach's own
+    // choice on every return. The two refs ARE the flags: they read true
+    // once the seed has run, and the age one also on a manual choice.
+    const src = code(read('routes/Planner.tsx'))
+    expect(src).toMatch(
+      /draftWith: \(activities\) =>\s*\n?\s*plannerDraft\(\{ \.\.\.session, activities \}, \{ coverage: coverageSeeded\.current, age: ageSeeded\.current \}\)/,
+    )
   })
 
   it('a new draft is not remounted when the profile arrives', () => {

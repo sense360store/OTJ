@@ -212,11 +212,34 @@ export function useAuthoringReturn<D>(host: AuthoringHost): { id: string | null;
     if (!mountUserId || !arrivedWith) return
     dropDraft(browserSessionStorage())
   }, [mountUserId, arrivedWith])
+  // The token leaves the address, ONCE, and how it leaves depends on whether
+  // there is a draft to protect.
+  //
+  // Codex, sixth finding. The Drill Maker's Back POPS to the plan beneath, and
+  // a pop leaves the Drill Maker as the FORWARD entry. Replacing the address
+  // in place left it there: browser Forward reopened the Drill Maker, and its
+  // Back popped to a plan entry whose token had been stripped and whose stash
+  // had been taken, so the plan rebuilt itself from what was saved and every
+  // restored edit went silently. A PUSH truncates the forward entries, which
+  // is what removes that trap. The entry it pushes over still carries the
+  // token, so a Back from the restored plan lands on the same plan, which the
+  // planner does not remount (its key is the session id, not the address) and
+  // whose draft therefore survives; a second Back leaves as it always did.
+  //
+  // Only when a draft was actually adopted. A token that matched nothing has
+  // nothing to protect, and an extra history entry there would be noise.
+  //
+  // The ref, not the address, is what makes this happen once. The effect wakes
+  // on every params change, so without it the Back onto the tokenised entry
+  // would push the clean address again and the coach could never leave the
+  // planner; StrictMode's second invocation would push a second entry too.
+  const stripped = useRef(false)
   useEffect(() => {
-    if (!arrivedWith || params.get(DRAFT_PARAM) !== arrivedWith) return
+    if (stripped.current || !arrivedWith || params.get(DRAFT_PARAM) !== arrivedWith) return
+    stripped.current = true
     const next = new URLSearchParams(params)
     next.delete(DRAFT_PARAM)
-    setParams(next, { replace: true })
-  }, [arrivedWith, params, setParams])
+    setParams(next, { replace: !taken })
+  }, [arrivedWith, params, setParams, taken])
   return taken
 }

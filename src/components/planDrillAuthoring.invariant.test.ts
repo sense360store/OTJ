@@ -75,7 +75,12 @@ describe('one hook, both hosts', () => {
   })
 
   it('the return trip is read by the planner and by the one restorer of the week plan editor', () => {
-    expect(code(read(PLANNER))).toMatch(/useAuthoringReturn<Session>\('planner'\)/)
+    // The planner's draft is the session AND which of its two seeded fields
+    // were settled when the coach left (PlannerDraft), which is why the type
+    // argument is not Session. See the seed pins in
+    // ../lib/newSessionCoverage.invariant.test.ts.
+    expect(code(read(PLANNER))).toMatch(/useAuthoringReturn<PlannerDraft>\('planner'\)/)
+    expect(code(read(PLANNER))).toMatch(/readPlannerDraft\(returned\.draft\)/)
     expect(code(read('components/RestoredTemplateEditor.tsx'))).toMatch(/useAuthoringReturn<TemplateInput>\('template'\)/)
     for (const f of ['routes/Templates.tsx', 'routes/ProgrammeDetail.tsx']) {
       expect(code(read(f)), f).toMatch(/<RestoredTemplateEditor templates=\{templates\} \/>/)
@@ -189,6 +194,20 @@ describe('no COACH-12 or COACH-13 semantics have leaked in', () => {
     expect(src).toMatch(/useEffect\(\(\) => \{[\s\S]{0,200}?dropDraft\(browserSessionStorage\(\)\)/)
     // takeDraft is the combined one shot and has no business in a render.
     expect(src).not.toMatch(/takeDraft/)
+  })
+
+  it('the token leaves the address once, and by a push when a draft was adopted', () => {
+    // Codex, sixth finding. The pop leaves the Drill Maker as the FORWARD
+    // entry, and a replace left it reachable: Forward reopened it and its own
+    // Back landed on a plan whose token had gone and whose stash had been
+    // taken, so the restored draft was rebuilt away from saved data. A push
+    // truncates the forward entries. The ref is the other half: the effect
+    // wakes on every params change, so without it the Back onto the tokenised
+    // entry pushes again and the coach cannot leave the planner.
+    const src = code(read(HOOK))
+    expect(src).toMatch(/const stripped = useRef\(false\)/)
+    expect(src).toMatch(/if \(stripped\.current \|\| !arrivedWith/)
+    expect(src).toMatch(/setParams\(next, \{ replace: !taken \}\)/)
   })
 
   it('the Drill Maker pops back to the plan, and only on its own push', () => {

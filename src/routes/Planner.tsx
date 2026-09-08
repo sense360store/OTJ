@@ -38,6 +38,7 @@ import {
 } from '../components/ui'
 import { ActivityListEditor, type SessionRowContent } from '../components/ActivityListEditor'
 import { useAuthoringReturn, usePlanDrillAuthoring } from '../components/PlanDrillAuthoring'
+import { plannerDraft, readPlannerDraft, type PlannerDraft } from '../lib/planDrillAuthoring'
 import {
   createPlannerActions,
   logSessionWriteError,
@@ -612,11 +613,11 @@ function PlannerEditor({
   // as the initial state, in place of the stored row or a blank one. It is
   // taken once, for this user and this session (a new session's stash is
   // named null, and so is a new session), and the token leaves the address.
-  const returned = useAuthoringReturn<Session>('planner')
-  const restored = returned && returned.id === (existing?.id ?? null) ? returned.draft : null
+  const returned = useAuthoringReturn<PlannerDraft>('planner')
+  const restored = returned && returned.id === (existing?.id ?? null) ? readPlannerDraft(returned.draft) : null
   const [session, setSession] = useState<Session>(() =>
     restored
-      ? restored
+      ? restored.session
       : existing
         ? (JSON.parse(JSON.stringify(existing)) as Session)
         : blankSession(newDefaults?.coachId ?? ''),
@@ -654,9 +655,14 @@ function PlannerEditor({
   // early leaves a session they can correct in one tap on the screen they
   // are already on. Blocking Save over a sub second read, or over a
   // failed one, would cost more than it saves.
-  // A restored draft is one the coach already had in hand, so it is never
-  // seeded either: a coverage they cleared before drawing stays cleared.
-  const coverageSeeded = useRef(!!existing || !!restored)
+  // A restored draft carries WHETHER THIS FIELD WAS SETTLED when the coach
+  // left, and that is what suppresses the seed rather than the draft's mere
+  // existence. A coverage they cleared before drawing stays cleared; a
+  // coach who left while the team read was still in flight, or after a
+  // failed read, comes back to a draft that still seeds when it answers.
+  // Reading every restored draft as settled left that session covering
+  // nobody, with no later repair and nothing on screen saying so.
+  const coverageSeeded = useRef(!!existing || restored?.seeded.coverage === true)
   useEffect(() => {
     if (coverageSeeded.current || teams.length === 0) return
     coverageSeeded.current = true
@@ -676,7 +682,7 @@ function PlannerEditor({
   // list's first entry, so the trip to draw would quietly change the age
   // group they had set. The whole promise of that trip is that the draft
   // comes back as it left.
-  const ageSeeded = useRef(!!existing || !!restored)
+  const ageSeeded = useRef(!!existing || restored?.seeded.age === true)
   useEffect(() => {
     if (ageSeeded.current || !clubAgeGroups || clubAgeGroups.length === 0) return
     ageSeeded.current = true
@@ -776,13 +782,16 @@ function PlannerEditor({
   // the week plan editor calls too. The planner hands it the draft as it
   // stands and takes back the plan with the created drill in it; the trip
   // to the Drill Maker keeps the whole draft, restored above on return.
-  const authoring = usePlanDrillAuthoring<Session>({
+  const authoring = usePlanDrillAuthoring<PlannerDraft>({
     host: 'planner',
     id: existing?.id ?? null,
     returnPath: existing ? `/planner?sessionId=${existing.id}` : '/planner',
     activities: session.activities,
     onActivities: (activities) => setSession((s) => ({ ...s, activities })),
-    draftWith: (activities) => ({ ...session, activities }),
+    // The draft is the session AND what the two reads had settled by the
+    // time the coach left, so the way back can resume a seed that never ran.
+    draftWith: (activities) =>
+      plannerDraft({ ...session, activities }, { coverage: coverageSeeded.current, age: ageSeeded.current }),
   })
 
   // One dated row's resolved content for the shared editor. A drillId whose

@@ -21,7 +21,7 @@
 // src/components/PlanDrillAuthoring.tsx and the shared activity list
 // editor renders the affordances.
 // =====================================================================
-import type { Activity, Phase } from './data'
+import type { Activity, Phase, Session } from './data'
 import {
   drawPath,
   FROM_PLAN_STATE,
@@ -132,4 +132,63 @@ export function leaveToDraw<D>({
   navigate(returnTo, { replace: true })
   navigate(drawPath(drillId, returnTo), { state: FROM_PLAN_STATE })
   return 'left'
+}
+
+// =====================================================================
+// THE DATED PLANNER'S DRAFT, AND WHY IT IS NOT THE SESSION ALONE.
+//
+// The planner fills two fields from reads that answer AFTER its first
+// render: the teams a NEW session covers, and the club's age group list.
+// Each is seeded once, into a draft nobody has touched, and each is then
+// SETTLED, so a later refetch cannot rewrite what the coach has since
+// chosen. Whether a field is settled is a fact about the draft, so it has
+// to travel with the draft.
+//
+// It used to be inferred on the way back, by reading the mere existence
+// of a restored draft as "both settled". That is right whenever the two
+// reads had answered before the coach left, and wrong when they had not:
+// a coach who pressed Save and draw it while the team read was still in
+// flight, or after a failed read that later refetched, came back to a
+// session that would never cover anybody and would keep the legacy age
+// group rather than the club's own list, and could save that scope with
+// nothing on screen saying a choice had been made for them. Codex's sixth
+// finding. Carrying the two flags states what actually happened instead
+// of guessing it from the draft's existence.
+// =====================================================================
+export interface PlannerSeeded {
+  // The teams the session covers, seeded from the club's team list.
+  coverage: boolean
+  // The age group, seeded from the club's age group list, and also settled
+  // by the coach choosing one.
+  age: boolean
+}
+
+export interface PlannerDraft {
+  session: Session
+  seeded: PlannerSeeded
+}
+
+export function plannerDraft(session: Session, seeded: PlannerSeeded): PlannerDraft {
+  return { session, seeded: { coverage: seeded.coverage, age: seeded.age } }
+}
+
+// Reads a draft written by the envelope above, or null. Checked rather
+// than cast, because the stash outlives a RELOAD of the tab, which is the
+// whole reason it is session storage rather than memory: the bundle that
+// reads it need not be the bundle that wrote it, and this envelope is
+// itself a change to what was written before. A value of another shape
+// answers "no draft", which is the fallback every other mismatch in this
+// flow already takes, and never a draft with invented flags: an unsettled
+// field read as settled is exactly the defect this replaced.
+//
+// The session INSIDE the envelope is the host's own state and is passed
+// through as it always was. Nothing here validates a plan's fields.
+export function readPlannerDraft(value: unknown): PlannerDraft | null {
+  if (!value || typeof value !== 'object') return null
+  const v = value as { session?: unknown; seeded?: unknown }
+  if (!v.session || typeof v.session !== 'object') return null
+  if (!v.seeded || typeof v.seeded !== 'object') return null
+  const seeded = v.seeded as { coverage?: unknown; age?: unknown }
+  if (typeof seeded.coverage !== 'boolean' || typeof seeded.age !== 'boolean') return null
+  return { session: v.session as Session, seeded: { coverage: seeded.coverage, age: seeded.age } }
 }
