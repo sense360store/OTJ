@@ -174,6 +174,22 @@ describe('no COACH-12 or COACH-13 semantics have leaked in', () => {
     expect(m, 'the Drill Maker route guard was not found in App.tsx').toBeTruthy()
     expect(code(read(HOOK))).toMatch(new RegExp(`DRILL_MAKER_ROUTE_CAP = '${m![1].replace('.', '\\.')}'`))
   })
+
+  it('the render half only looks, and the removal sits in an effect', () => {
+    // Codex, fourth finding. takeDraft READS AND REMOVES, and it used to be
+    // called from a lazy useState initializer, which React runs during
+    // render and may run twice (StrictMode) or abandon before committing.
+    // The only copy could be destroyed on a render nobody adopted. The
+    // initializer now calls the pure peekDraft and dropDraft happens in an
+    // effect; a destructive call reaching the render again is what this
+    // refuses. It cannot see a removal hidden behind a local helper, which
+    // the pure suite's abandoned-render test covers instead.
+    const src = code(read(HOOK))
+    expect(src).toMatch(/useState\(\(\) =>\s*\n?\s*mountUserId && arrivedWith\s*\n?\s*\? peekDraft</)
+    expect(src).toMatch(/useEffect\(\(\) => \{[\s\S]{0,200}?dropDraft\(browserSessionStorage\(\)\)/)
+    // takeDraft is the combined one shot and has no business in a render.
+    expect(src).not.toMatch(/takeDraft/)
+  })
 })
 
 describe('what this file cannot catch', () => {

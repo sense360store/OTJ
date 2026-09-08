@@ -84,11 +84,19 @@ export function stashDraft<D>(storage: StorageLike | null, stash: AuthoringStash
   }
 }
 
-// Reads and removes the entry. The draft comes back only when the token,
-// the user and the host all match; any read WITH a token clears the entry,
-// matched or not, because an entry that did not match this trip is stale.
-// A read with no token is a host opened normally and touches nothing.
-export function takeDraft<D>(
+// Reads the entry and REMOVES NOTHING. The draft comes back only when the
+// token, the user and the host all match. A read with no token is a host
+// opened normally and touches nothing.
+//
+// Pure on purpose, and that is the whole reason this is separate from the
+// removal. React reads a host's initial state in a lazy useState
+// initializer, which runs DURING RENDER, and a render can be double
+// invoked (StrictMode does exactly that) or abandoned before it commits.
+// A read that destroyed the stash there could throw the only copy away on
+// a render nobody adopted, and the next one would find nothing and fall
+// back to the saved or blank plan. So the render half only looks, and the
+// host removes the entry from an effect once the render has committed.
+export function peekDraft<D>(
   storage: StorageLike | null,
   expect: { host: AuthoringHost; token: string | null; userId: string | null | undefined },
 ): { id: string | null; draft: D } | null {
@@ -96,7 +104,6 @@ export function takeDraft<D>(
   let raw: string | null
   try {
     raw = storage.getItem(AUTHORING_STASH_KEY)
-    storage.removeItem(AUTHORING_STASH_KEY)
   } catch {
     return null
   }
@@ -112,6 +119,34 @@ export function takeDraft<D>(
   if (s.token !== expect.token || !expect.userId || s.userId !== expect.userId || s.host !== expect.host) return null
   if (!('draft' in s) || s.draft === undefined) return null
   return { id: typeof s.id === 'string' ? s.id : null, draft: s.draft as D }
+}
+
+// The destructive half, called once the adopting render has COMMITTED. It
+// clears whatever is there, matched or not, which is the same rule the
+// combined read always had: an entry that did not match this trip is stale
+// and nobody is coming back for it. The caller decides WHETHER to call
+// this, and calls it only when it actually attempted a take, so a host
+// opened with no token still touches nothing.
+export function dropDraft(storage: StorageLike | null): void {
+  if (!storage) return
+  try {
+    storage.removeItem(AUTHORING_STASH_KEY)
+  } catch {
+    // A storage that refuses a write leaves the entry; the token is one
+    // shot in the address either way, so it is never adopted twice.
+  }
+}
+
+// Read and remove in one call, which is what a caller outside a React
+// render wants. Composed from the two halves so there is ONE validation
+// rule rather than two that agree today.
+export function takeDraft<D>(
+  storage: StorageLike | null,
+  expect: { host: AuthoringHost; token: string | null; userId: string | null | undefined },
+): { id: string | null; draft: D } | null {
+  const found = peekDraft<D>(storage, expect)
+  if (expect.token) dropDraft(storage)
+  return found
 }
 
 export function withDraftToken(path: string, token: string): string {

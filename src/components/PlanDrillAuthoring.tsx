@@ -60,8 +60,9 @@ import {
 import {
   browserSessionStorage,
   DRAFT_PARAM,
+  dropDraft,
   newDraftToken,
-  takeDraft,
+  peekDraft,
   type AuthoringHost,
 } from '../lib/authoringReturn'
 import type { Activity } from '../lib/data'
@@ -186,9 +187,31 @@ export function useAuthoringReturn<D>(host: AuthoringHost): { id: string | null;
   // that beat and replace the Drill Maker's entry with a bare one, sending
   // the coach straight back. Keyed on the mount, it cannot.
   const [arrivedWith] = useState(() => params.get(DRAFT_PARAM))
+  // The user id this mount saw, so the render and the effect below decide
+  // from the same values rather than from whatever the auth hook holds a
+  // beat later.
+  const [mountUserId] = useState(() => user?.id ?? null)
+  // LOOK during render, REMOVE after it commits. An initializer runs during
+  // render, and a render can be double invoked (StrictMode does exactly
+  // that) or thrown away before committing. Taking the stash here destroyed
+  // the only copy on a render nobody adopted, and the next one found an
+  // empty stash and fell back to the saved or blank plan, losing the very
+  // draft this whole flow exists to carry. The read is pure now and the
+  // removal sits in the effect below, so an abandoned render costs nothing.
   const [taken] = useState(() =>
-    user?.id && arrivedWith ? takeDraft<D>(browserSessionStorage(), { host, token: arrivedWith, userId: user.id }) : null,
+    mountUserId && arrivedWith
+      ? peekDraft<D>(browserSessionStorage(), { host, token: arrivedWith, userId: mountUserId })
+      : null,
   )
+  // The removal, on exactly the mounts that looked. A host opened with no
+  // token, or before the user is known, attempted no take and so clears
+  // nothing. Anything else is cleared whether it matched or not, which is
+  // the rule the combined read always carried: an entry that did not match
+  // this trip is stale.
+  useEffect(() => {
+    if (!mountUserId || !arrivedWith) return
+    dropDraft(browserSessionStorage())
+  }, [mountUserId, arrivedWith])
   useEffect(() => {
     if (!arrivedWith || params.get(DRAFT_PARAM) !== arrivedWith) return
     const next = new URLSearchParams(params)
