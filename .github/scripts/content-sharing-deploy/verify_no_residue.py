@@ -133,8 +133,12 @@ import urllib.parse
 #
 #   ASSERTED BY THE POST-APPLY GATE (verify_hosted_state.assert_post), and
 #   read back again here:
-#     - the row is the unique newest one, recorded at the newest version, in
-#       a ledger of 48 rows with exactly one row named venue_layouts;
+#     - the row is the unique newest one, recorded at the newest version,
+#       with exactly one row carrying the name venue_layouts (assert_post
+#       compares target_rows against 1). The ledger's TOTAL row count is
+#       NOT asserted: assert_post reads rows_total only to print it, so a
+#       ledger with any number of older rows passes. The count is under
+#       the readback below, where it belongs;
 #     - the VERSION of the row before it is 20260904174142. Only the version:
 #       assert_post compares second_version against expected_previous_version
 #       and never compares second_name, which it reads but uses only in the
@@ -153,10 +157,15 @@ import urllib.parse
 #       SECURITY ENABLED, read from pg_class.relrowsecurity rather than from
 #       mere presence; that venue_layouts_scope_unique is a UNIQUE CONSTRAINT
 #       on that table rather than a plain index; that
-#       public.venue_layout_is_valid(jsonb, integer) resolves with its two
+#       public.venue_layout_is_valid(jsonb, integer) RESOLVES with its two
 #       argument signature (to_regprocedure, never a textual signature cast,
-#       for the reason 0049's review found), which is what makes a four zone
-#       value on a five slot row unrepresentable; and that
+#       for the reason 0049's review found), and no more than that: the
+#       probe does not evaluate the predicate and does not check that
+#       venue_layouts_zones_shape invokes it, so it does NOT establish that
+#       a four zone value on a five slot row is unrepresentable. That rests
+#       on the migration's own self-verification, which drives the predicate
+#       through the canonical layouts and some fifty refused values inside
+#       the apply transaction, and on review of the SQL; and that
 #       audit_venue_layouts() is SECURITY DEFINER with an empty search_path
 #       and is executable by NEITHER authenticated NOR anon, the one place
 #       this migration is deliberately stricter than audit_venues().
@@ -180,7 +189,9 @@ import urllib.parse
 #       moot, and only the readback excludes it;
 #     - the table grants are exactly what was reviewed: authenticated holds
 #       DELETE, INSERT, SELECT and UPDATE, and anon holds nothing at all. The
-#       probes above read the trigger function's privileges, not the table's.
+#       probes above read the trigger function's privileges, not the table's;
+#     - the ledger holds 48 rows in total. Read back only, for the reason
+#       above: nothing in the gate compares it.
 #
 # Those probes are why the objects' existence and their security posture
 # belong above and not here: they are asserted by the gate on every run, not
