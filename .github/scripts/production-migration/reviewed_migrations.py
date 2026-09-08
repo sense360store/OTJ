@@ -716,6 +716,117 @@ REVIEWED_MIGRATIONS: dict[str, ReviewedMigration] = {
             ),
         },
     ),
+    # ------------------------------------------------------------------
+    # 0053_venue_layouts: the admin owned venue layouts, scoped to venue,
+    # season and age group (roadmap COACH-5, migration M2 of the coaching
+    # workflow programme), and the club level age group vocabulary the
+    # scope key rests on. Adds ONE column, public.clubs.age_groups text[]
+    # not null default '{}', bounded by an immutable predicate and a check
+    # constraint; ONE table, public.venue_layouts, keyed on (club, venue,
+    # season, age group, kind, slots) with the zones shape stated as a
+    # check constraint through three immutable predicates in the manner of
+    # 0046 (the predicate takes slots AS WELL AS zones, because the zone
+    # count is a property of the pair); two policies mirroring venues
+    # exactly (club wide select, club.manage FOR ALL); explicit grants
+    # (authenticated select, insert, update, delete; anon nothing); and ONE
+    # audit trigger writing venue_layout.created, venue_layout.updated with
+    # field NAMES only and venue_layout.deleted through the private writer
+    # audit_domain_event, with EXECUTE on the trigger function revoked from
+    # public, anon and authenticated, which a trigger does not need at fire
+    # time. No existing policy, grant, capability key, role or trigger
+    # changes, and no row: every club gets '{}' by default, the table is
+    # empty, and no session age group is rewritten.
+    #
+    # Its own self-verification takes a BEFORE fingerprint of the club,
+    # venue and season rows, the session age groups, the audit row count,
+    # the capability catalogue and the policy, grant and trigger sets of
+    # clubs, venues and seasons into a transaction local table before the
+    # DDL and requires each unchanged after it; requires the column, the
+    # table, the two policies, the grants, the three references, the scope
+    # key and the four check constraints in their reviewed shape; drives
+    # the two predicates through the canonical four layouts and some fifty
+    # refused values (the version, every key outside the allow list at
+    # every level including an address, a postcode, a coordinate pair, an
+    # image reference and a player id, every bound, the numbering, and the
+    # four zone value on a five slot row); reads the stored trigger
+    # function back to require the three actions, one writer call, six
+    # literal field names and no value; and exercises the constraints, the
+    # audit trail, the season restrict and the venue cascade on synthetic
+    # rows inside a subtransaction it always rolls back, checking the
+    # rollback against the before fingerprint.
+    # .github/scripts/production-migration/test_0053_venue_layouts.sh
+    # applies the real file to a stand-in, drives the table and the column
+    # through row level security as a club.manage holder, a coach without
+    # it, a club.manage holder of another club and anon, proves the trigger
+    # fires for a writer who cannot call its function, flips the five
+    # probes below in both gate states, proves a second apply fails and
+    # changes nothing, and mutates the file twenty ways to prove each
+    # self-verification check bites. It runs in CI.
+    #
+    # Written against a hosted database whose newest ledger row is
+    # 20260904174142 / atomic_team_order, the version the 0052 apply
+    # stamped on 4 September 2026, read live from the hosted ledger on
+    # 7 September 2026. No remote branch and no open pull request carried
+    # a 0053 file on that date.
+    # ------------------------------------------------------------------
+    "supabase/migrations/0053_venue_layouts.sql": ReviewedMigration(
+        path="supabase/migrations/0053_venue_layouts.sql",
+        ledger_name="venue_layouts",
+        idempotency_key="otj:migration:0053_venue_layouts",
+        expected_previous_version="20260904174142",
+        expected_previous_name="atomic_team_order",
+        objects={
+            # information_schema.columns, as 0051's column probe: the SHAPE
+            # with the name. A nullable column, a different element type or
+            # a different default would be a different migration.
+            "public.clubs.age_groups, a text array, not null, default empty": (
+                "(select count(*) > 0 from information_schema.columns "
+                "where table_schema = 'public' and table_name = 'clubs' "
+                "and column_name = 'age_groups' "
+                "and data_type = 'ARRAY' and udt_name = '_text' "
+                "and is_nullable = 'NO' "
+                "and column_default = concat(chr(39), '{}', chr(39), '::text[]'))"
+            ),
+            # The table, through to_regclass, with row level security ON:
+            # a table created without it would be a different, and worse,
+            # migration, so the probe reads relrowsecurity rather than mere
+            # presence.
+            "public.venue_layouts, with row level security enabled": (
+                "(select count(*) > 0 from pg_class c "
+                "where c.oid = to_regclass('public.venue_layouts') "
+                "and c.relkind = 'r' and c.relrowsecurity)"
+            ),
+            # The scope key by name and kind: a unique constraint rather
+            # than a plain index, on the table it belongs to.
+            "venue_layouts_scope_unique, the unique scope key": (
+                "(select count(*) > 0 from pg_constraint x "
+                "where x.conrelid = to_regclass('public.venue_layouts') "
+                "and x.conname = 'venue_layouts_scope_unique' "
+                "and x.contype = 'u')"
+            ),
+            # The shape predicate with its two argument signature, which is
+            # the whole reason a four zone value cannot sit on a five slot
+            # row. Resolved through to_regprocedure, never a cast.
+            "public.venue_layout_is_valid(jsonb, integer), the shape predicate": (
+                "(select to_regprocedure("
+                "'public.venue_layout_is_valid(jsonb, integer)'"
+                ") is not null)"
+            ),
+            # The audit trigger function: SECURITY DEFINER with an empty
+            # search_path, and NOT executable by anon or authenticated,
+            # which is the posture the header argues for and the one
+            # difference from audit_venues(). chr(34) rather than a literal
+            # double quote: the verifier refuses a probe carrying one.
+            "audit_venue_layouts() is SECURITY DEFINER and private to the trigger": (
+                "(select count(*) > 0 from pg_proc p "
+                "where p.oid = to_regprocedure('public.audit_venue_layouts()') "
+                "and p.prosecdef "
+                "and p.proconfig @> array[concat('search_path=', chr(34), chr(34))] "
+                "and not has_function_privilege('authenticated', p.oid, 'EXECUTE') "
+                "and not has_function_privilege('anon', p.oid, 'EXECUTE'))"
+            ),
+        },
+    ),
 }
 
 

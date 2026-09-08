@@ -2000,3 +2000,33 @@ a.activity-batch:hover { text-decoration: underline; }
      visible wherever the image renders. */
   .public-attribution, .public-media-attribution { display: block; }
 }
+
+/* ---- Venue layouts (COACH-5) ----------------------------------------
+   The admin Venues screen and the per venue Layouts screen are on the
+   shared system; the drawing itself is one SVG, painted with the state
+   tokens so it flips with the theme. Nothing here is imagery. */
+.venue-pitch { width: 100%; }
+.venue-pitch-svg { display: block; width: 100%; height: auto; }
+.venue-pitch-ground { fill: var(--bg-2); stroke: var(--line); stroke-width: 2; }
+.venue-zone-body { fill: var(--info-surface); stroke: var(--info); stroke-width: 2; }
+.venue-zone-badge { fill: var(--info); }
+.venue-zone-number { fill: var(--info-fg); font-family: var(--display); font-size: var(--text-md); font-weight: 800; pointer-events: none; }
+.venue-zone-name { fill: var(--ink); font-size: var(--text-sm); font-weight: 700; pointer-events: none; }
+.venue-zone-handle { fill: var(--info); opacity: 0.85; }
+.venue-zone-handle-hit { fill: transparent; cursor: nwse-resize; touch-action: none; }
+.venue-zone-editable { cursor: move; touch-action: none; }
+.venue-zone-editable:focus-visible .venue-zone-body { stroke: var(--focus); stroke-width: 4; }
+.venue-pitch-editing .venue-pitch-svg { touch-action: none; }
+.venue-scope { display: flex; flex-wrap: wrap; gap: var(--space-8) var(--space-12); align-items: flex-end; margin-bottom: var(--space-16); }
+.venue-scope .field { flex: 1 1 180px; min-width: 0; margin-bottom: 0; }
+.venue-layout-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-16); }
+.venue-layout-card h2 { font-size: var(--text-lg); margin: 0 0 var(--space-8); }
+.venue-layout-acts { display: flex; flex-wrap: wrap; gap: var(--space-8); margin-top: var(--space-12); }
+.venue-layout-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-8) var(--space-12); margin-top: var(--space-12); }
+.venue-layout-fields .field { margin-bottom: 0; }
+.venue-layout-empty { color: var(--slate); font-size: var(--text-sm); margin: 0; }
+.venue-back { margin-bottom: var(--space-12); }
+.age-group-list { display: flex; flex-wrap: wrap; gap: var(--space-8); list-style: none; margin: 0 0 var(--space-12); padding: 0; }
+.age-group-item { display: inline-flex; align-items: center; gap: var(--space-4); padding: var(--space-4) var(--space-4) var(--space-4) var(--space-12); border: 1px solid var(--line); border-radius: var(--radius-pill); font-size: var(--text-sm); font-weight: 700; }
+.admin-stack-card { margin-top: var(--space-16); }
+.admin-stack-card h3 { font-size: var(--text-lg); margin-bottom: var(--space-4); }

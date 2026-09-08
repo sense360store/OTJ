@@ -37,6 +37,9 @@ export type AuditEntityType =
   | 'programme'
   | 'session'
   | 'venue'
+  // A venue layout (0053): where the stations and the games go at one venue
+  // for one season and one age group. Admin configuration, no child data.
+  | 'venue_layout'
   // The bulk permanent deletion run (0050_bulk_delete_players.sql). Its
   // entity_id is the run's batch id, so the reference opens the run and lists
   // the identities that went with it, the way an import batch does.
@@ -284,6 +287,7 @@ export const ENTITY_OPTIONS: { value: AuditEntityType; label: string }[] = [
   { value: 'programme', label: 'Programme' },
   { value: 'session', label: 'Session' },
   { value: 'venue', label: 'Venue' },
+  { value: 'venue_layout', label: 'Venue layout' },
 ]
 
 export const SOURCE_OPTIONS: { value: AuditSource; label: string }[] = [
@@ -340,6 +344,11 @@ export const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'venue.created', label: 'Venue added' },
   { value: 'venue.updated', label: 'Venue renamed' },
   { value: 'venue.deleted', label: 'Venue removed' },
+  // Venue layouts (0053) are their own namespace rather than a widening of
+  // venue.updated, so "Venue renamed" stays true.
+  { value: 'venue_layout.created', label: 'Venue layout drawn' },
+  { value: 'venue_layout.updated', label: 'Venue layout redrawn' },
+  { value: 'venue_layout.deleted', label: 'Venue layout removed' },
   { value: 'spond.mapping_created', label: 'Spond mapping created' },
   { value: 'spond.mapping_changed', label: 'Spond mapping updated' },
   { value: 'spond.mapping_removed', label: 'Spond mapping removed' },
@@ -453,6 +462,15 @@ export function describeActivityEvent(
       return 'Venue renamed'
     case 'venue.deleted':
       return 'Venue removed'
+    case 'venue_layout.created':
+      return 'Venue layout drawn'
+    case 'venue_layout.updated':
+      // The allow list carries the zones and the scope fields; a redraw is
+      // by far the common case, and a refiled layout is a redraw of where
+      // it applies.
+      return 'Venue layout redrawn'
+    case 'venue_layout.deleted':
+      return 'Venue layout removed'
     case 'spond.mapping_created':
       return 'Spond mapping created'
     case 'spond.mapping_changed':
@@ -566,6 +584,8 @@ export function entityRef(
       return { kind: 'label', label: 'Session' }
     case 'venue':
       return { kind: 'label', label: 'Venue' }
+    case 'venue_layout':
+      return { kind: 'label', label: 'Venue layout' }
     default:
       return { kind: 'none' }
   }

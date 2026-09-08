@@ -69,8 +69,9 @@ across clubs, and the `team.updated` trail naming the field and no value, with
 the transactional writer from 0052 in `tests/security/set-team-order.test.ts`,
 below), plus
 `capabilities` / `role_capabilities` / `member_roles` for the capability
-consistency checks, and `profiles` / `member_roles` / `member_teams` for the
-signup membership boundary.
+consistency checks, `profiles` / `member_roles` / `member_teams` for the
+signup membership boundary, and `venue_layouts` plus `clubs.age_groups`
+(0053, in `tests/security/venue-layouts.test.ts`, below).
 
 ## Content share substrate
 
@@ -324,6 +325,45 @@ real PostgreSQL, both ways round, with the loser asserted to have blocked before
 being refused. Full design: the header of
 `supabase/migrations/0052_atomic_team_order.sql` and the `0052` section of
 `docs/operations/production-migration-apply.md`.
+
+### venue_layouts and clubs.age_groups (0053_venue_layouts)
+
+The admin owned venue layouts and the club's age group list
+(`tests/security/venue-layouts.test.ts`). Contract: `venue_layouts` reads club
+wide with no capability, a parent included, because a layout names no child;
+insert, update and delete take `club.manage`, club wide (a coach and a parent
+are refused, another club's `club.manage` holder reads none and changes zero
+rows, and an admin cannot plant a layout in another club). One layout per
+kind and slots per (venue, season, age group), refused by
+`venue_layouts_scope_unique`. The zones shape is the check constraint
+`venue_layouts_zones_shape` and holds for every caller, `service_role`
+included: an address, a postcode, a coordinate pair, an image reference, a
+player id and a Spond member id are each refused, as are an unknown version, a
+zone off the surface, a string coordinate (which must fail the constraint
+rather than raise a cast error) and four zones on a five slot row; three
+stations and three games are refused by `venue_layouts_slots_valid`; an
+untrimmed or blank age group by `venue_layouts_age_group_bounded`. The
+composite keys carry the club, so another club's venue or season is refused by
+the key itself. A season holding layouts is not removable; removing a venue
+takes its layouts with it. The trail is `venue_layout.created`,
+`venue_layout.updated` naming `zones` alone for a redraw (a write that changes
+nothing writes nothing) and `venue_layout.deleted`, each with no value, and
+the trigger function is not reachable through `/rpc` from any role (PostgREST
+does not expose a trigger function, so the call fails to resolve before any
+privilege is consulted, and the suite reads `has_function_privilege` back to
+prove `anon` and `authenticated` hold no EXECUTE on it either). A redraw is
+conditional on the stored value the draft opened on: the update carries the
+zones the read returned as a filter, so a second admin's redraw finds no row,
+lands nothing and is reported as changed elsewhere rather than overwriting
+the first. `clubs.age_groups` is written under `club.manage` alone, read by
+every member of the club and by no other club, and bounded by
+`clubs_age_groups_valid` for every caller. Grants: anon nothing, authenticated
+exactly the four verbs.
+
+What this suite cannot prove is a second connection racing the first on the
+scope key, and the migration's own self-verification; both are driven against
+a real PostgreSQL in
+`.github/scripts/production-migration/test_0053_venue_layouts.sh`.
 
 ## CI
 

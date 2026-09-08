@@ -173,6 +173,9 @@ describe('describeActivityEvent: PR 8 wider rollout actions', () => {
     ['venue.created', 'Venue added'],
     ['venue.updated', 'Venue renamed'],
     ['venue.deleted', 'Venue removed'],
+    ['venue_layout.created', 'Venue layout drawn'],
+    ['venue_layout.updated', 'Venue layout redrawn'],
+    ['venue_layout.deleted', 'Venue layout removed'],
     ['session.team_added', 'Team added to a session'],
     ['session.team_removed', 'Team removed from a session'],
     ['team.deleted', 'Team deleted'],
@@ -234,7 +237,7 @@ describe('describeActivityEvent: PR 8 wider rollout actions', () => {
 
   it('the ENTITY filter options cover every PR 8 entity type', () => {
     const values = new Set(ENTITY_OPTIONS.map((o) => o.value))
-    for (const t of ['user', 'role', 'team', 'spond_mapping', 'drill', 'template', 'programme', 'session'] as const) {
+    for (const t of ['user', 'role', 'team', 'spond_mapping', 'drill', 'template', 'programme', 'session', 'venue', 'venue_layout'] as const) {
       expect(values.has(t)).toBe(true)
     }
   })
