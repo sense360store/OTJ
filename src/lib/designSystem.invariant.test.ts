@@ -80,6 +80,12 @@ const OWNED_FILES = [
   // minutes field and the detail panel; every one is a class on the scale
   // now, so the add bar and the rows this slice touched cannot regress.
   'components/ActivityListEditor.tsx',
+  // VISUAL-03 with COACH-5: the Venues admin screen, adopted with the
+  // Layouts affordance that reached its rows, the per venue Layouts screen
+  // and the drawing they share. None of the three writes an inline style.
+  'routes/AdminVenues.tsx',
+  'routes/AdminVenueLayouts.tsx',
+  'components/VenueLayoutPitch.tsx',
 ]
 
 
@@ -480,6 +486,11 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
     // and add bar write no inline step now; the layout lives in the shared
     // stylesheet, which the off scale rule above already reads.
     'components/ActivityListEditor.tsx',
+    // VISUAL-03 with COACH-5: the same three files, for the same reason.
+    // Their layout rules are in the shared stylesheet.
+    'routes/AdminVenues.tsx',
+    'routes/AdminVenueLayouts.tsx',
+    'components/VenueLayoutPitch.tsx',
   ]
 
   it('writes no inline margin, padding or gap outside the spacing scale', () => {
@@ -540,6 +551,9 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
       'routes/Home.css',
       'routes/ParentHome.css',
       'components/ActivityListEditor.tsx',
+      'routes/AdminVenues.tsx',
+      'routes/AdminVenueLayouts.tsx',
+      'components/VenueLayoutPitch.tsx',
     ]) {
       expect(SPACING_OWNED, `${f} is covered`).toContain(f)
       expect(sourceFiles.map(rel), `${f} exists`).toContain(f)

@@ -70,6 +70,9 @@ vi.mock('../lib/queries', () => ({
     { id: 'trojans', name: 'Trojans', bibColour: null },
   ]),
   useVenues: () => query([]),
+  // The club's age group list (COACH-5), read so a new session starts on it;
+  // empty here, so the builder keeps its own default.
+  useClubAgeGroups: () => query([]),
   useRefreshSpondPlanning: () => refresh,
   useEventKindContext: () => ({ teamNames: ['Titans', 'Trojans'] }),
   SpondLinkTakenError: class SpondLinkTakenError extends Error {},

@@ -5,6 +5,7 @@
 // into these types. Taxonomy constants and sessionMinutes stay here because
 // they are static and shared, not server data.
 import { activeActivityMinutes } from './activityStructure'
+import { LEGACY_DEFAULT_AGE_GROUP } from './ageGroups'
 import type { ActivitySlot, StructuredActivity } from './activityStructure'
 
 export type CornerKey = 'technical' | 'physical' | 'social' | 'psychological'
@@ -222,6 +223,10 @@ export function hasAllCaps(caps: ReadonlySet<string>, needed: readonly string[])
 }
 
 // The club row. crestUrl is a storage path in the media bucket or a full URL.
+// The club's age group vocabulary (clubs.age_groups, 0053) is deliberately
+// NOT here: it rides its own read (useClubAgeGroups), so the one club read
+// the shell depends on keeps working against a database the migration has
+// not reached yet.
 export interface Club {
   id: string
   name: string
@@ -592,13 +597,18 @@ export function sessionMinutes(s: { activities: Activity[] }): number {
 // New code never writes a value to it, and the write path never sends the
 // column at all, so a value here would only ever be read back by
 // coverageOf as legacy coverage during the optimistic window.
+// The age group is the one label every new session always started on; a
+// create path that has the club's list in hand sets defaultAgeGroup from
+// ../lib/ageGroups over it (COACH-5). Not a parameter here, for the reason
+// the team is not one: newSessionCoverage.invariant.test.ts pins this
+// signature.
 export function blankSession(coachId: string): Session {
   return {
     id: crypto.randomUUID(),
     name: 'New Session',
     date: '2026-06-16',
     time: '17:30',
-    ageGroup: 'U8s',
+    ageGroup: LEGACY_DEFAULT_AGE_GROUP,
     // No venue until someone picks one from the club's list. A seeded name
     // would make every new session claim to be somewhere nobody chose, and
     // the frozen free text column is never written with a value.

@@ -81,6 +81,10 @@ vi.mock('../lib/queries', () => ({
   useSession: () => query(state.session),
   useTeams: () => query([{ id: 'titans', name: 'Titans' }]),
   useVenues: () => query([]),
+  // COACH-5's club age group list. Empty here on purpose: this file's
+  // subject is the authoring affordances, and an unconfigured club is the
+  // state that leaves every label exactly as the planner had it.
+  useClubAgeGroups: () => query([] as string[]),
   useBoards: () => query([]),
   useMemberMap: () => ({ [THEM]: { fullName: 'Jo Bloggs' } }),
   useDrillMap: () => ({ d1: drill('d1', 'Rondo 4v1') }),

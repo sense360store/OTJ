@@ -374,8 +374,13 @@ database did not have. The workflow was therefore run against the reviewed
 
 ## Reviewed, registered, not yet applied
 
-Nothing. Every registered migration has been applied, and the hosted head is
-`20260904174142` / `atomic_team_order`.
+`0053_venue_layouts` (coaching workflow COACH-5, migration M2), registered
+against `20260904174142` / `atomic_team_order`, the hosted head read live on
+7 September 2026, with the idempotency key `otj:migration:0053_venue_layouts`.
+It is the only reviewed migration not yet applied. What it does is under
+"What `0053` does" below; the apply is the human gate its pull request waits
+on, and it goes BEFORE the frontend from the same change is deployed, because
+the new screens read a column and a table the database does not yet have.
 
 `0051_team_sort_order` sat here between its review and its apply on 2 September
 2026, and `0052_atomic_team_order` between its review and its apply on
@@ -383,6 +388,121 @@ Nothing. Every registered migration has been applied, and the hosted head is
 them is numbered and registered against the head the previous apply left, at
 its own review, read live from the ledger rather than inferred from the highest
 file on disk, and only if nothing else has applied first.
+
+## What `0053` does, kept for reference
+
+`0053_venue_layouts` adds ONE column, `public.clubs.age_groups text[] not null
+default '{}'`, the club's canonical age group vocabulary, bounded by the
+immutable predicate `age_group_list_is_valid` and the check constraint
+`clubs_age_groups_valid` (trimmed, non blank, at most 20 characters each, no
+duplicates, at most 30 entries); ONE table, `public.venue_layouts`, one row
+per `(club, venue, season, age group, kind, slots)` holding numbered zones in
+fraction coordinates, with the shape stated as the check constraint
+`venue_layouts_zones_shape` through three immutable predicates in the manner
+of `0046` (`venue_layout_keys_within`, `venue_layout_zone_is_valid` and
+`venue_layout_is_valid(zones, slots)`, which takes the row's slot count as
+well as the value because the zone count is a property of the pair); two
+policies mirroring `venues` exactly (`venue_layouts_select_club`, club wide
+read with no capability, and `venue_layouts_manage`, `club.manage` on both
+arms); explicit grants (authenticated select, insert, update and delete, anon
+nothing); and ONE audit trigger, `audit_venue_layouts`, writing
+`venue_layout.created`, `venue_layout.updated` with the changed field NAMES
+from the allow list (zones, venue_id, season_id, age_group, kind, slots) and
+`venue_layout.deleted` through the private writer `audit_domain_event`, with
+EXECUTE on the trigger function revoked from public, anon and authenticated.
+Nothing else: no existing policy, grant, capability key, role or trigger
+changes, and no row: every club gets `'{}'` by default, the table is empty,
+and no `sessions.age_group` value is rewritten. A change to the club's age
+group list writes no audit row, which is stated rather than overlooked: clubs
+has never carried an audit trigger. The full reasoning is the file's own
+header, and the settled shape is
+`docs/product/coaching-workflow/04-data-model-proposal.md` section 3.
+
+Its self-verification takes a BEFORE fingerprint of every club, venue and
+season row, every session's age group, the audit row count, the capability
+catalogue and the policy, grant and trigger sets of clubs, venues and seasons
+into a transaction local table before the DDL, and requires each unchanged
+afterwards (the club fingerprint compared minus the one column the file adds,
+and every list required to be empty). It requires the column, the table, the
+two policies by their exact expressions, the grants, the three references
+(club cascade, venue cascade composite, season restrict composite), the scope
+key by its definition, exactly two indexes and the four check constraints in
+their reviewed shape. It drives the two predicates through the four canonical
+layouts the client writes and some fifty refused values: the pair (four zones
+on a five slot row and five on four), the version as a different number, a
+string and absent, a null value and a null slot count, every key outside the
+allow list at every level (an address, a postcode, a coordinate pair, an
+image reference, a key inside size, a player id, a Spond member id, an
+arbitrary key on a zone), every coordinate bound, a zone leaving the surface
+or below the minimum size, a string coordinate (which must fail the
+constraint rather than raise a cast error), a missing side, an over long or
+non string name, a declared size out of range, and every numbering fault
+(a shared number, a number beyond the count, zero, a fraction, a string, a
+missing number, and six zones carrying the numbers one to five, which only
+the count check can see). It reads the stored trigger function back with its
+comment lines stripped and requires the three actions, exactly one writer
+call in the reviewed form, six `array_append` calls each carrying a field
+name literal, no `safe_changes` and no `metadata`, and the early return that
+keeps a no-op update silent; and it requires the function to be SECURITY
+DEFINER with an empty `search_path` and not executable by anon or
+authenticated. Then it runs the rules rather than describing them: inside a
+subtransaction it always rolls back it inserts a synthetic club, venue and
+non current season, writes and reads back the club's list and has a duplicate
+refused by name, draws the four layouts of one scope and a fifth under a
+second age group, has a second four station layout in that scope refused by
+`venue_layouts_scope_unique`, three stations and three games refused by
+`venue_layouts_slots_valid`, four zones on the five slot row and a coordinate
+pair refused by `venue_layouts_zones_shape`, an untrimmed age group refused
+by `venue_layouts_age_group_bounded` and another club's id refused by the
+composite key; asserts the trail is five `venue_layout.created` events, one
+`venue_layout.updated` naming `zones` alone for a redraw, none for a write
+that changes nothing, `{zones, age_group}` in allow list order for a refiled
+redraw, no value anywhere and the `database_trigger` source for an apply with
+no actor; has the season's deletion refused by `venue_layouts_season_fk`;
+deletes the venue and requires its layouts gone and five
+`venue_layout.deleted` events written; and checks the rollback against the
+before fingerprint rather than trusting it.
+
+Its five probes are the column by shape (`information_schema.columns`: a text
+array, not null, default `'{}'`), the table with row level security ON
+(`to_regclass` then `relrowsecurity`), the scope key by name and kind
+(`pg_constraint`), the two argument shape predicate (`to_regprocedure`), and
+the trigger function as SECURITY DEFINER with an empty `search_path` and NOT
+executable by anon or authenticated, which is the posture the header argues
+for and the one difference from `audit_venues()`.
+
+`.github/scripts/production-migration/test_0053_venue_layouts.sh` runs in CI
+against a throwaway PostgreSQL: it applies the reviewed file to a stand-in of
+the clubs, venues, seasons, sessions and audit substrate, flips the five
+probes in both gate states, drives the club list and the table through row
+level security as a `club.manage` holder, a coach without it, a parent holding
+nothing, a `club.manage` holder of another club and anon (who holds no grant
+and is refused before row level security is consulted), proves the trigger
+fires for a writer who is refused a direct call of its function with
+permission denied, proves the composite keys refuse another club's venue and
+season, proves the season restrict holds even for the owner and the venue
+cascade removes and records the layouts while leaving the session at that
+venue unplaced with its age group untouched, proves a second apply fails at
+the column add and rolls back the predicate it had replaced, and mutates the
+file twenty ways to prove the self-verification bites, each mutation pinned
+to the message of the one check that catches it: a backfill of the club list,
+three stations allowed, the zone count untied from slots, `zones` missing
+from the allow list, a new policy on venues, a grant to anon, the audit
+trigger dropped, EXECUTE left with public, a value written into an event, a
+second writer in dead code, a redundant prefix index, the season reference
+cascading, the write loosened to `sessions.create`, the read widened beyond
+the club, SECURITY DEFINER dropped, a new capability key, an untrimmed age
+group allowed, the minimum zone size dropped, a session age group rewritten
+and a string version accepted. The security policy suite's
+`tests/security/venue-layouts.test.ts` covers the contract through PostgREST
+on the local stack for the roles the fixtures hold.
+
+Ordering. THIS MIGRATION GOES FIRST, before the frontend from the same change
+is deployed: the admin screens read `clubs.age_groups` and `venue_layouts`,
+and against a database without them PostgREST answers 42703 and 42P01.
+Applying it early is safe, because the column is `'{}'` everywhere, the table
+is empty, and no deployed client reads or writes either until the frontend
+ships.
 
 ## What `0051` does, kept for reference
 

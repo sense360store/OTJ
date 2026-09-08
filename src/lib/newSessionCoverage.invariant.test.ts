@@ -159,7 +159,9 @@ describe('no create path seeds coverage from the signed in coach', () => {
     // rename the variable to pass this.
     const src = code(read('components/PlanFromSpond.tsx'))
     expect(src).toMatch(/const allTeamIds = \(teamsQuery\.data \?\? \[\]\)\.map\(/)
-    expect(src).toMatch(/sessionFromSpondEvent\(event, user\?\.id \?\? '', allTeamIds, venues\)/)
+    // COACH-5 added the club's age group default as a fifth argument; the
+    // first four are exactly what they were.
+    expect(src).toMatch(/sessionFromSpondEvent\(event, user\?\.id \?\? '', allTeamIds, venues(, defaultAgeGroup\(clubAgeGroups\))?\)/)
   })
 
   it('the planner seeds a draft once, and never an existing session', () => {
@@ -179,6 +181,23 @@ describe('no create path seeds coverage from the signed in coach', () => {
     // And only into a draft that covers nothing, so a coach who has
     // cleared every team keeps an empty selection.
     expect(src).toMatch(/s\.teamIds\.length > 0 \? s :/)
+  })
+
+  it('the planner seeds the age group under the same two suppressions', () => {
+    // COACH-5's age group seed and COACH-11's restored draft arrived on
+    // separate branches and met on main, where the seed suppressed only an
+    // existing session. A coach drafting a NEW session carries no
+    // `existing`, so the way back from the Drill Maker seeded into a draft
+    // they had already filled in: where the label they chose is not one
+    // the club's list carries (a retired spelling, or the legacy default)
+    // defaultAgeGroup answers with the list's first entry, and the trip to
+    // draw silently changed their age group. The two seeds now suppress on
+    // exactly the same pair, which is what this pins; they are separate
+    // tests so a failure names which seed moved.
+    const src = code(read('routes/Planner.tsx'))
+    expect(src).toMatch(/const ageSeeded = useRef\(!!existing \|\| !!restored\)/)
+    // Once, so a later club list refetch cannot rewrite an edited draft.
+    expect(src).toMatch(/if \(ageSeeded\.current \|\| !clubAgeGroups \|\| clubAgeGroups\.length === 0\) return/)
   })
 
   it('a new draft is not remounted when the profile arrives', () => {

@@ -87,6 +87,7 @@ on:
           - supabase/migrations/0050_bulk_delete_players.sql
           - supabase/migrations/0051_team_sort_order.sql
           - supabase/migrations/0052_atomic_team_order.sql
+          - supabase/migrations/0053_venue_layouts.sql
       confirm_project:
         description: "Type the target Supabase project ref to confirm (must equal uynorsnrvocksgqweucu)"
         required: true

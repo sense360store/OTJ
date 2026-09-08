@@ -52,7 +52,7 @@ next**, as the first gated coaching migration.
 | COACH-2B | Coaching workflow | The authoring affordances: mark a station or the games phase, and a Not running tonight toggle on a dated session | **Done** | P1 | No migration. Shipped in #202. Gates COACH-6, COACH-7, COACH-8. |
 | COACH-3 | Coaching workflow | Suggested setup from confirmed attendance: station count, groups, unique colours, readiness | **Done** | P1 | No schema. Shipped in #203 (generator) and #204 (screen). Wants COACH-1 and degrades honestly without it, saying the order is unset. |
 | COACH-4 | Coaching workflow | Preserve the coach's setup when attendance changes | **Done** | P1 | No schema. Shipped in #206. |
-| COACH-5 | Coaching workflow | Venue layouts scoped to venue, season and age group: four and five station layouts, one and two game visuals, admin owned | Later | P1 | Migration M2, gated, and the largest review here. New table, new shape boundary. Independent. |
+| COACH-5 | Coaching workflow | Venue layouts scoped to venue, season and age group: four and five station layouts, one and two game visuals, admin owned | Built, migration awaiting apply | P1 | Migration M2, `0053_venue_layouts`, gated and registered against `20260904174142` / `atomic_team_order`. New table, new shape boundary, and `clubs.age_groups`. Independent. |
 | COACH-6 | Coaching workflow | The setup map on session day | Later | P1 | Depends on COACH-2 and COACH-5. |
 | COACH-7 | Coaching workflow | The full screen station detail, browsing only | Later | P1 | Depends on COACH-6. Pull the phone half of QUALITY-02 in here. |
 | COACH-8 | Coaching workflow | The game plan and a separate game bib | Later | P2 | Migration M3, gated. Depends on COACH-3, wants COACH-1 and COACH-5. |
@@ -82,12 +82,15 @@ share half is deliberately held as **DRILL-02b**.
 **Recommendation: no status change**, and one wording correction so the header
 line does not read as though #189 were still open (section 5).
 
-**DRILL-02b stays where #189 left it**, outside this programme. It would require
-changing the Edge `DRILL_COLS`, `projectDrillFields`, `TOP_ALLOWED` and
-`REF_DRILL_ALLOWED`, removing `'diagram'` from `FORBIDDEN_ANYWHERE`, the three
-client snapshot types and their mirrored key sets, redeploying both Edge
-Functions, and refreshing every existing share because a snapshot is frozen. It
-is a prerequisite for nothing here.
+**DRILL-02b stays outside this programme**, and has since been built as its own
+reviewed change. It changed exactly what this paragraph foresaw: the Edge
+`DRILL_COLS`, `projectDrillFields`, `TOP_ALLOWED` and `REF_DRILL_ALLOWED`, the
+removal of `'diagram'` from `FORBIDDEN_ANYWHERE`, the client snapshot types and
+their mirrored key sets, and a redeploy of both Edge Functions, which is held
+until the content sharing deploy pin is reconciled with the COACH-5 lane.
+Existing shares are frozen and gain a diagram only by their owner's refresh.
+The contract is `docs/security/content-sharing-boundary.md` section 55. It is a
+prerequisite for nothing here.
 
 **Print needs no row.** #189 traced it: `window.print()` exists once in `src/`,
 in `PublicShare.tsx`, and `@media print` targets only `.public-*`. There is no

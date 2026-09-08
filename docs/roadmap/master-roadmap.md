@@ -2,7 +2,7 @@
 
 Status: active source of truth
 
-Last reviewed: 4 September 2026 (VISUAL-01 delivered in #211; VISUAL-02 in progress, adopted route by route in seven pull requests, #212 to #218, with Home under review and Sessions and the remaining admin screens still to come; the coaching workflow's four migration-free slices COACH-2, COACH-3, COACH-4 and COACH-10 shipped in #198, #202, #203, #204, #206 and #207, and COACH-1, the club team order, is built on two gated migrations: COACH-1A, `0051_team_sort_order`, merged as #223 and applied on 2 September 2026 (hosted `20260902150212` / `team_sort_order`), and `0052_atomic_team_order`, which adds the transactional writer `set_team_order` because a whole order saved from the browser as separate compare and set statements cannot stop two admins moving disjoint rows and leaving a valid order neither submitted, merged as #226 and applied on 4 September 2026 (hosted `20260904174142` / `atomic_team_order`), with COACH-1B, the Teams screen's ordering affordance, calling that function for its Save; PLAYERS-01 and #196 both merged on 27 August; DRILL-02's public/share half remains separately gated)
+Last reviewed: 7 September 2026 (VISUAL-01 delivered in #211; VISUAL-02 in progress, adopted route by route in eight merged pull requests, #212 to #218 and #228, with Home delivered in #228 on 7 September 2026 and Sessions and the remaining admin screens still to come; the coaching workflow's four migration-free slices COACH-2, COACH-3, COACH-4 and COACH-10 shipped in #198, #202, #203, #204, #206 and #207, and COACH-1, the club team order, is built on two gated migrations: COACH-1A, `0051_team_sort_order`, merged as #223 and applied on 2 September 2026 (hosted `20260902150212` / `team_sort_order`), and `0052_atomic_team_order`, which adds the transactional writer `set_team_order` because a whole order saved from the browser as separate compare and set statements cannot stop two admins moving disjoint rows and leaving a valid order neither submitted, merged as #226 and applied on 4 September 2026 (hosted `20260904174142` / `atomic_team_order`), with COACH-1B, the Teams screen's ordering affordance, calling that function for its Save; PLAYERS-01 and #196 both merged on 27 August; DRILL-02's public/share half remains separately gated)
 
 This file is the short, operational roadmap for the product. Detailed design documents remain authoritative for their specialist areas, but priority and delivery status live here so there is one answer to “what next?”.
 
@@ -35,10 +35,10 @@ Priority is P0 (blocking/urgent) through P3 (nice to have).
 | TRAIN-01 | Training Day | One-glance authorised coach view of the players in the working groups and their actual bib colours | Done | P1 | Shipped in #185; read-only Players & groups overview using existing inclusion/group/bib semantics |
 | SPOND-06 | Spond | Use Spond event location to prefill/match session venue when deterministic | Done | P1 | Shipped in #186; new drafts only, no migration, no Edge change |
 | SPOND-08 | Spond | Make a diagnosed OTJ ↔ Spond team mismatch actionable: reconcile the current-season team from a proved Spond member link | Done | P0 | Shipped in #190, completed in #192. Both gates have run: migration 0049 applied 17 August 2026 (hosted head `20260817104226`, `spond_team_reconcile`) and `spond-link-members` deployed at version 4. Verified by a live production smoke test |
-| DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; print and public share need a separate reviewed Edge/snapshot change (DRILL-02b). This public half does not block VISUAL-00/01 |
+| DRILL-02 | Drill Maker | Show existing drill diagrams across Planner, Session Day, Live and print/share views | In progress | P1 | Authenticated surfaces in #189; the print and public share half (DRILL-02b) is built and reviewed as an Edge/snapshot projection change, and closes only once both content sharing functions are deployed after the post COACH-5 pin reconciliation. This public half does not block VISUAL-00/01 |
 | VISUAL-00 | Product design | Design Read: define the target OTJ visual language from current code, the reference design and representative real screens before changing pixels | Done | P1 | Delivered in #210 as `docs/design/visual-design-read.md`, captured against `main` at `434f67f` after #196 merged and CI went green. Documentation only: no React, CSS, behaviour, route, permission, Supabase or migration change. Settles the type scale, semantic colour roles and contrast floors, the spacing and radius scales, surfaces, the control primitives, both shells, the modal and sheet contract, the seven state families, focus and touch requirements, non-colour cues and what stays recognisably OTJ. Names the acceptance screens for VISUAL-01/02/03 and records seven open product decisions in its Part 5 |
 | VISUAL-01 | Product design | Build the shared visual foundation and app shell: tokens, typography, primitives, sidebar/top bar/content frame and mobile bottom navigation | Done | P1 | Delivered in #211 on 27 August 2026: the token set, the primitives (including the danger and on-dark button variants, Note and Sheet) and the shared shell, implementing Part 2 of `docs/design/visual-design-read.md`, with the five Part 4 acceptance surfaces checked in both themes at every width each exists at and the full suite green. The table and badge primitives are accepted in VISUAL-02, as Part 4 states. Presentation only, no route/permission/data behaviour changes |
-| VISUAL-02 | Product design | Apply the new system to stable everyday surfaces including Home, Sessions, Registered Players, Activity, account/login, Feedback and stable admin screens | In progress | P1 | VISUAL-01 delivered. Adopted so far: Registered Players (#212, #213), Activity (#214), Account (#215), Login and Set Password (#216), Feedback (#217), Admin Users and Admin Teams (#218); Home is adopted in a PR under review. Sessions and the admin screens beyond Users and Teams are not yet adopted. PLAYERS-01 shipped first, so its destructive flow was redesigned once against final behaviour |
+| VISUAL-02 | Product design | Apply the new system to stable everyday surfaces including Home, Sessions, Registered Players, Activity, account/login, Feedback and stable admin screens | In progress | P1 | VISUAL-01 delivered. Adopted so far: Registered Players (#212, #213), Activity (#214), Account (#215), Login and Set Password (#216), Feedback (#217), Admin Users and Admin Teams (#218), Home (#228, merged 7 September 2026). Sessions and the admin screens beyond Users and Teams are not yet adopted. PLAYERS-01 shipped first, so its destructive flow was redesigned once against final behaviour |
 | VISUAL-03 | Product design | Redesign evolving feature areas alongside their functional work rather than polishing them immediately before they change | Later | P1 | VISUAL-01; pair Planner/week plans with COACH-11/12/13, Training Day with COACH-5/6/7/8, public/share after DRILL-02b |
 | VISUAL-04 | Product design | Whole-product visual/accessibility QA across phone, tablet, desktop, light/dark/live modes and all state families | Later | P1 | VISUAL-01/02 and the relevant VISUAL-03 waves |
 | TRAIN-02 | Training Day | Safe no-login Training Day share | Later | P1 | Separate security-reviewed public projection; never expose player/Spond/private register data |
@@ -62,7 +62,7 @@ When there is capacity, prefer this sequence unless production evidence changes 
 1. ~~Close PR #196 as the preferred Drill Maker baseline for the visual programme.~~ Done: #196 merged on 27 August 2026 and CI on `main` at `434f67f` is green across all eight jobs. PLAYERS-01 / #191 merged earlier the same day. The redesign baseline is closed.
 2. ~~Run **VISUAL-00**, the Design Read.~~ Done. `docs/design/visual-design-read.md` (#210) is the written target visual language, captured against `main` at `434f67f`, and is the task contract for VISUAL-01.
 3. ~~Land **VISUAL-01**, the shared foundation and shell, before route-by-route polishing.~~ Done: #211 merged on 27 August 2026. New feature work now inherits the new system rather than extending the old one.
-4. Run **VISUAL-02** over the stable everyday surfaces, in reviewable groups rather than one application-wide PR. In progress: seven pull requests, #212 to #218, have adopted Registered Players, Activity, Account, Login and Set Password, Feedback, and Admin Users and Admin Teams, and Home is adopted in a PR under review; Sessions and the remaining admin screens are still to come.
+4. Run **VISUAL-02** over the stable everyday surfaces, in reviewable groups rather than one application-wide PR. In progress: eight merged pull requests, #212 to #218 and #228, have adopted Registered Players, Activity, Account, Login and Set Password, Feedback, Admin Users and Admin Teams, and Home; Sessions and the remaining admin screens are still to come.
 5. Continue **VISUAL-03** alongside the functional roadmap: Planner/week-plan authoring with COACH-11/12/13, Training Day/setup with COACH-5/6/7/8, public/share only after DRILL-02b, and Live coordinated with LIVE-01/02 and accessibility.
 6. Finish with **VISUAL-04**, a whole-product phone-first visual/accessibility QA pass.
 
@@ -332,23 +332,30 @@ Shipped in #191 on 27 August 2026. The destructive boundary and its documented r
 
 **DRILL-02b — publishing a diagram (separate, security reviewed)**
 
-- Blocked on a decision before it is blocked on code: whether a coach drawn
-  diagram may be published at all. A diagram carries free text a coach typed,
-  and a share is a frozen copy, so a key that reaches
-  `content_shares.snapshot` is served until the link is revoked and no later
-  fix to the projection takes it back. That reasoning is recorded in the Edge
-  Function's own deny list beside the `'diagram'` entry.
-- If agreed, the change is one reviewed PR touching: the Edge `DRILL_COLS`,
-  `projectDrillFields`, `TOP_ALLOWED`, `REF_DRILL_ALLOWED`, the removal from
-  `FORBIDDEN_ANYWHERE`, `PublicDrillSnapshot` / `PublicReferencedDrill` /
-  `PublicSessionSnapshot` with their mirrored client key sets, and a redeploy
-  of BOTH `read-content-share` and `manage-content-share`, which share
-  `_shared/share.ts`. Existing shares are frozen and would need reminting to
-  carry one.
-- Print then follows with no further work beyond a page break rule, since it
-  renders the snapshot DOM.
-- Gated by the review gates in CLAUDE.md, with the deploy verified by reading
-  the deployed source back byte for byte rather than by a version number.
+- The decision was taken: a coach drawn diagram may be published, through a
+  positive allow list of its own, never for an England Football derived drill,
+  and with no element id and no key outside the seven public shapes. The
+  change is built as one reviewed PR touching exactly what was foreseen: the
+  Edge `DRILL_COLS`, `projectDrillFields`, `TOP_ALLOWED`, `REF_DRILL_ALLOWED`,
+  the removal of `'diagram'` from `FORBIDDEN_ANYWHERE` (replaced by the 0046
+  identity keys), the mirrored client types and key sets, and the public drill
+  renderer mounting the canonical `DrillDiagramView`. No migration: the
+  security suite proves the lifecycle RPC and `read_public_share` carry the new
+  field unchanged. The contract is `docs/security/content-sharing-boundary.md`
+  section 55.
+- Existing shares are frozen and gain no diagram by deployment. Absence of the
+  key is accepted by every validator and renders as no diagram; the owner's
+  "Update what people see" rebuilds the copy through the same builder and is
+  the one repair path. `snapshotVersion` stays 1, so no stored link is
+  invalidated.
+- Print followed with no further work: the diagram sits in a `.public-block`
+  that already keeps together on one page, and the print stylesheet preserves
+  its colour as it does the board's.
+- **Still gated:** the redeploy of BOTH `read-content-share` and
+  `manage-content-share`, which share `_shared/share.ts`, waits for the
+  content sharing deploy pin to be reconciled with the COACH-5 migration lane.
+  Until then production keeps omitting the diagram. Verified by reading the
+  deployed source back byte for byte rather than by a version number.
 
 **DRILL-03 — venue/pitch composer**
 

@@ -39,7 +39,7 @@ turned out to be finished or unnecessary.
 | COACH-4, the setup preserved across attendance changes | **Merged.** #206. |
 | COACH-10, the shared authoring seam | **Merged.** #207. |
 | COACH-11, create and draw a drill from either surface | **Built**, this pull request. No migration. |
-| Migration numbering | `0052_atomic_team_order.sql` is the highest applied and stamped `20260904174142` / `atomic_team_order` on 4 September 2026, which is the hosted head; `0051_team_sort_order.sql` is the row before it at `20260902150212` / `team_sort_order`. Nothing is registered and unapplied. `0053` stays unclaimed until a register entry pins it to whatever head the ledger then holds, read live rather than inferred from the highest file on disk. |
+| Migration numbering | `0052_atomic_team_order.sql` is the highest applied and stamped `20260904174142` / `atomic_team_order` on 4 September 2026, which is the hosted head; `0051_team_sort_order.sql` is the row before it at `20260902150212` / `team_sort_order`. `0053_venue_layouts.sql` (COACH-5, M2) is registered against that head, read live on 7 September 2026, and is reviewed and not yet applied. |
 
 **The two pull requests that had to stay separate from this work have both
 merged**, on 27 August 2026, with nothing from this programme in either:
@@ -372,6 +372,35 @@ second save are idempotent. Reset is absent.
 **PR boundary.** One PR.
 
 ### COACH-5: venue layouts, scoped to venue, season and age group
+
+**Status.** Built, in one pull request rather than the four this plan carried,
+because the model, the admin editor, the renderer and the migration each
+proved against the others and splitting them would have shipped a table no
+screen read. Migration `0053_venue_layouts` carries M2 and the
+`clubs.age_groups` column below, registered against the hosted head
+`20260904174142` / `atomic_team_order` read live on 7 September 2026, and
+awaits its apply, which goes before the frontend. `src/lib/venueLayout.ts`
+holds the parser, the serialiser, the signature, the defaults and editing
+moves, the fail closed season resolution and the five no-layout states, and
+`src/lib/venueLayout.invariant.test.ts` pins that the client's bounds are the
+database's and that nothing else resolves a season or writes the table.
+`src/lib/ageGroups.ts` is the one age group list, read by the planner, the
+programme modal and the layouts admin, and edited on the Club screen.
+`src/components/VenueLayoutPitch.tsx` is the read only drawing COACH-6 will
+mount and the editor (drag to move, drag the corner to resize, arrows and
+Shift with arrows on the keyboard, every change announced).
+`src/routes/AdminVenueLayouts.tsx` is the admin surface, reached from each
+row of the Venues screen, which is adopted onto the shared system with it
+(VISUAL-03). Saved means stored: the readback signature must equal the draft,
+a scope another admin took is reported as theirs, and a draft opened on a
+stored layout drops itself when a fresh read shows it changed underneath.
+Proof: `tests/security/venue-layouts.test.ts` through PostgREST, the
+migration's self-verification, the CI harness with twenty mutations, the
+static screen tests, and the visual harness entries in
+`tools/visual/admin.mjs`. Two things named rather than hidden: the audit trail
+records a redraw as "Venue layout redrawn" whatever field moved, and the
+session control still offers the standard defaults while a club has set no
+list, so nothing changes for the two production clubs on apply.
 
 **Outcome.** An admin describes each venue once per season and age group: where
 four stations go, where five go, where one game goes, where two go. Every coach

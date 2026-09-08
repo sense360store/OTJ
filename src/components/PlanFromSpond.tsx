@@ -26,6 +26,7 @@ import {
   useSpondEvents,
   useTeams,
   useVenues,
+  useClubAgeGroups,
 } from '../lib/queries'
 import { memberTeamIds } from '../lib/data'
 import type { Session, SpondEvent } from '../lib/data'
@@ -37,6 +38,7 @@ import {
   spondPlanSuggestions,
   spondTeamLabel,
 } from '../lib/spond'
+import { defaultAgeGroup } from '../lib/ageGroups'
 import { ALL_EVENTS_LABEL, DEFAULT_EVENT_KIND, type EventKind, isSpondMatch, TRAINING_LABEL } from '../lib/eventKind'
 import {
   DEFAULT_LIFECYCLE_SCOPE,
@@ -277,6 +279,7 @@ export function PlanFromSpond({
   // hand made session starts, and the coach picks one field down. Blocking
   // on that would take planning away over a venue guess.
   const { data: venues = [], isLoading: venuesLoading } = useVenues()
+  const { data: clubAgeGroups } = useClubAgeGroups()
   // The classifier context, so the fixture rule fires here as well. Beside
   // the other reads, above the capability guard: hooks run in one order or
   // they run wrong.
@@ -384,7 +387,7 @@ export function PlanFromSpond({
   // the whole club's Tuesday as one team's session.
   const plan = (event: SpondEvent) => {
     const session = {
-      ...sessionFromSpondEvent(event, user?.id ?? '', allTeamIds, venues),
+      ...sessionFromSpondEvent(event, user?.id ?? '', allTeamIds, venues, defaultAgeGroup(clubAgeGroups)),
       id: stableCreateId(ids.current, event.id),
     }
     void submit(session)

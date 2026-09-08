@@ -31,7 +31,9 @@ import { Planner } from '../../src/routes/Planner'
 import { DrillDiagramEditor } from '../../src/routes/DrillDiagramEditor'
 import { TemplateFormModal } from '../../src/components/TemplateFormModal'
 import { RestoredTemplateEditor } from '../../src/components/RestoredTemplateEditor'
-import { ACTIVITY_BATCH_ID, PAST_SEASON, PLANNER_SESSION_ID, SESSIONS, SPOND_TEAM_ID, WEEK_PLAN_TEMPLATE, harnessState } from './fixtures'
+import { AdminVenues } from '../../src/routes/AdminVenues'
+import { AdminVenueLayouts } from '../../src/routes/AdminVenueLayouts'
+import { ACTIVITY_BATCH_ID, ADMIN_VENUES, PAST_SEASON, PLANNER_SESSION_ID, SESSIONS, SPOND_TEAM_ID, WEEK_PLAN_TEMPLATE, harnessState } from './fixtures'
 import '../../src/styles.css'
 
 const params = new URLSearchParams(location.search)
@@ -293,6 +295,12 @@ function Harness() {
           <Route path="/templates" element={<WeekPlanDemo />} />
           <Route path="/drill/:id/diagram" element={<DrillDiagramEditor />} />
         </Route>
+        {/* VISUAL-03 with COACH-5: the venues admin and one venue's layouts,
+            behind the real club.manage guard. */}
+        <Route element={<RequireCap cap="club.manage" />}>
+          <Route path="/admin/venues" element={<AdminVenues />} />
+          <Route path="/admin/venues/:venueId/layouts" element={<AdminVenueLayouts />} />
+        </Route>
       </Routes>
     </Shell>
   )
@@ -364,6 +372,8 @@ const ENTRY: Record<string, string> = {
   weekplan: '/templates',
   adminusers: '/admin/users',
   adminteams: '/admin/teams',
+  adminvenues: '/admin/venues',
+  adminvenuelayouts: `/admin/venues/${ADMIN_VENUES[0].id}/layouts`,
   players: playersEntry(),
   activity: activityEntry(),
   account: '/account',

@@ -52,11 +52,11 @@ Query string, all optional:
 
 | Key | Values |
 |---|---|
-| `screen` | `home`, `sessions`, `login`, `auth`, `players`, `activity`, `account`, `feedback`, `adminusers`, `adminteams`, `more`, `dialog`, `primitives`, `planner`, `weekplan` |
+| `screen` | `home`, `sessions`, `login`, `auth`, `players`, `activity`, `account`, `feedback`, `adminusers`, `adminteams`, `adminvenues`, `adminvenuelayouts`, `more`, `dialog`, `primitives`, `planner`, `weekplan` |
 | `caps` | `coach` (default), `parent`, `viewer`, `auditor`, `admin`, `planner`, `clubadmin`, `author` (a coach who also holds `drills.create`, for the COACH-11 authoring surfaces) |
 | `theme` | `light` (default), `dark` |
 | `auth` | `signedin` (default), `signedout` (the default for `screen=login`), `needspassword`, `authloading` |
-| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning`, `adminloading`, `adminerror`, `noteams`, `gridloading`, `gridunavailable`, `lastadmin`, `statesunknown`, `orderunset`, `orderincomplete`, `homeloading`, `homeerror`, `nosessions`, `nothingscheduled`, `quietweek`, `endedtoday`, `live`, `nocontent`, `noteam` |
+| `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning`, `adminloading`, `adminerror`, `noteams`, `gridloading`, `gridunavailable`, `lastadmin`, `statesunknown`, `orderunset`, `orderincomplete`, `homeloading`, `homeerror`, `nosessions`, `nothingscheduled`, `quietweek`, `endedtoday`, `live`, `nocontent`, `noteam`, `novenues`, `nolayouts`, `noagegroups` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
 `state` is read by the screens whose acceptance is a state matrix rather than a

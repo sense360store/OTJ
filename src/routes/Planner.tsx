@@ -13,6 +13,7 @@ import {
   useMyCapabilities,
   useSession,
   useTeams,
+  useClubAgeGroups,
   useVenues,
 } from '../lib/queries'
 import { ActivityStructureSummary } from '../components/ActivityRoleControls'
@@ -20,6 +21,7 @@ import { type ActivityRole, applyRole, setNotRunning } from '../lib/activityRole
 import { blankSession, embedSrc, isSampleMedia, sessionMinutes } from '../lib/data'
 import type { Activity, Drill, MediaItem, Phase, Session, Team } from '../lib/data'
 import type { Venue } from '../lib/venues'
+import { ageGroupOptions, defaultAgeGroup } from '../lib/ageGroups'
 import { newSessionCoverage, soleCoveredTeamId, toggleCoveredTeam } from '../lib/sessionTeams'
 import { isFaVideo } from '../lib/fa'
 import { Icon } from '../components/icons'
@@ -358,6 +360,7 @@ export function SessionFieldsView({
   teams,
   venues,
   venuesUnavailable,
+  ageGroups,
   attachedBoardName,
   onField,
   onIntentions,
@@ -371,6 +374,10 @@ export function SessionFieldsView({
   readOnly: boolean
   busy: boolean
   teams: Team[]
+  // The club's age group list (0053), or undefined while the club read has
+  // not answered: the control then offers the standard defaults, and always
+  // the session's own current label (src/lib/ageGroups.ts).
+  ageGroups?: readonly string[]
   venues: Venue[]
   // True when the venue list could not be read. "We could not load the
   // venues" must not render as "your club has none".
@@ -426,7 +433,7 @@ export function SessionFieldsView({
         <div className="field" style={{ flex: 1 }}>
           <label>Age group</label>
           <select value={session.ageGroup} disabled={frozen} onChange={(e) => onField('ageGroup', e.target.value)}>
-            {['U6s', 'U7s', 'U8s', 'U9s', 'U10s', 'U11s', 'U12s'].map((a) => (
+            {ageGroupOptions(ageGroups, session.ageGroup).map((a) => (
               <option key={a}>{a}</option>
             ))}
           </select>
@@ -591,6 +598,7 @@ function PlannerEditor({
   const { data: teams = [] } = useTeams()
   const venuesQuery = useVenues()
   const venues = venuesQuery.data ?? []
+  const { data: clubAgeGroups } = useClubAgeGroups()
   const { data: boards = [] } = useBoards()
   const memberById = useMemberMap()
   // The lookups only this host can resolve for the shared editor's rows.
@@ -654,6 +662,26 @@ function PlannerEditor({
     coverageSeeded.current = true
     setSession((s) => (s.teamIds.length > 0 ? s : { ...s, teamIds: newSessionCoverage(teams.map((t) => t.id)) }))
   }, [teams])
+  // The age group, the same way: once the club's list answers, a NEW
+  // session starts on that list rather than on the one label it always
+  // started on (COACH-5). Once, and only where the coach has not already
+  // chosen a label the list carries; an existing session never seeds.
+  //
+  // A restored draft is excluded for the reason coverage excludes it, and
+  // the case is reachable rather than theoretical: a coach drafting a NEW
+  // session carries no `existing`, so on the way back from the Drill Maker
+  // this would seed into a draft they had already filled in. Where the
+  // label they chose is not one the club's list carries, a retired
+  // spelling or the legacy default, defaultAgeGroup answers with the
+  // list's first entry, so the trip to draw would quietly change the age
+  // group they had set. The whole promise of that trip is that the draft
+  // comes back as it left.
+  const ageSeeded = useRef(!!existing || !!restored)
+  useEffect(() => {
+    if (ageSeeded.current || !clubAgeGroups || clubAgeGroups.length === 0) return
+    ageSeeded.current = true
+    setSession((s) => ({ ...s, ageGroup: defaultAgeGroup(clubAgeGroups, s.ageGroup) }))
+  }, [clubAgeGroups])
   const [addOpen, setAddOpen] = useState(false)
   const [boardPickerOpen, setBoardPickerOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -983,6 +1011,7 @@ function PlannerEditor({
             teams={teams}
             venues={venues}
             venuesUnavailable={venuesQuery.isError}
+            ageGroups={clubAgeGroups}
             attachedBoardName={attachedBoard?.name}
             onField={setField}
             onIntentions={setIntentions}

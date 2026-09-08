@@ -24,6 +24,28 @@ The nine other functions are untouched and stay `verify_jwt = true`. After a
 run the project has exactly **eleven** functions, and `read-content-share` is
 the only one reachable without a JWT.
 
+### The next deploy carries DRILL-02b, and waits for the COACH-5 pin
+
+The drill diagram projection (DRILL-02b, `docs/security/content-sharing-boundary.md`
+section 55) changed `_shared/share.ts`, which BOTH functions import, and
+`manage-content-share`'s own `DRILL_COLS`. Both functions therefore deploy
+together on the next run, `read-content-share` FIRST (the old read function's
+deny list refuses the new key, so a management function deployed ahead of it
+would mint links that read as unavailable until the second deploy), and the
+readback of each must be checked against the merged source. Two things are
+deliberately true about that run:
+
+- It is **held** until `EXPECTED_LAST_MIGRATION` (below) has been reconciled
+  with whatever the COACH-5 migration lane applies to the hosted ledger. The
+  pin is never moved to make a deploy pass; it is moved by the reconciliation
+  procedure after the apply, and only then does this workflow run.
+- Until it runs, the merged code changes nothing in production. The deployed
+  builders keep omitting the diagram and every existing link keeps serving
+  the snapshot it froze. After it runs, existing links STILL carry no
+  diagram: a share gains one only when its owner presses Update what people
+  see, which rebuilds the copy through the same builder. No post deploy
+  script re-mints anything.
+
 ### The inventory pin, and when it must be reconciled
 
 `EXPECTED` in `.github/scripts/content-sharing-deploy/verify_inventory.py` is
@@ -208,9 +230,17 @@ From the checked-out repository, with the CLI reading `SUPABASE_ACCESS_TOKEN`
 from the environment:
 
 ```
-supabase functions deploy manage-content-share --project-ref "$SUPABASE_PROJECT_ID"
 supabase functions deploy read-content-share  --project-ref "$SUPABASE_PROJECT_ID" --no-verify-jwt
+supabase functions deploy manage-content-share --project-ref "$SUPABASE_PROJECT_ID"
 ```
+
+In that order, read first, and the workflow runs them in that order too. Each
+function bundles its own copy of `_shared/share.ts`, and the read function's
+validator is the stricter reader of what the management function writes, so a
+management function deployed ahead of the read function can mint links the old
+read function refuses (DRILL-02b's `diagram` key is the concrete case). The
+reverse order has no such window: the new read function accepts whatever the
+previous management function wrote.
 
 Each command packages the function directory and the shared modules its import
 graph references:

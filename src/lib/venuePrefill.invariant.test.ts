@@ -125,7 +125,9 @@ describe('one venue matcher, consulted from one place', () => {
     // Bounded rather than open ended: the arguments carry their own
     // parentheses (`Object.keys(teamById)`), so this cannot be a simple
     // "anything but a bracket" run.
-    expect(src).toMatch(/sessionFromSpondEvent\([\s\S]{0,200}?,\s*venues\)/)
+    // COACH-5 added the club's age group default after the venues; the
+    // venues still have to be the query's own value.
+    expect(src).toMatch(/sessionFromSpondEvent\([\s\S]{0,200}?,\s*venues(,\s*defaultAgeGroup\(clubAgeGroups\))?\)/)
   })
 
   it('builds no regex out of a venue name or a Spond location', () => {

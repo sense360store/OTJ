@@ -86,6 +86,16 @@ import { type EventKindContext, spondEventLookup } from './eventKind'
 import { diagramSignature, parseDrillDiagram, serializeDrillDiagram, type DrillDiagram } from './drillDiagram'
 import { countLinkedResponses, tonightUpsertBatches, type ResponseCounts, type TonightChange } from './tonight'
 import type { Venue } from './venues'
+import { normaliseAgeGroups } from './ageGroups'
+import {
+  isLayoutShape,
+  parseVenueLayoutZones,
+  serialiseVenueLayoutZones,
+  type LayoutKind,
+  type LayoutShape,
+  type VenueLayout,
+  type VenueLayoutZones,
+} from './venueLayout'
 import type { RegisterEntry } from './register'
 import { buildRsvpByPlayer } from './spondRsvp'
 import { isSpondMemberId } from './spondLinking'
@@ -1532,10 +1542,12 @@ export function useUpdateDrill() {
 // The diagram is read and written on its OWN, never as part of a drill row.
 // Three things follow from that, all deliberate:
 //
-//   1. DRILL_COLS does not gain `diagram`, so the library list, the planner,
-//      the share snapshot builders and every other drill read carry exactly
-//      what they carried before. A diagram cannot leak through a path that was
-//      never told about it, and the list payload does not grow.
+//   1. DRILL_COLS does not gain `diagram`, so the library list, the planner
+//      and every other client drill read carry exactly what they carried
+//      before. A diagram cannot leak through a path that was never told about
+//      it, and the list payload does not grow. The one reader outside this
+//      hook is the server side share builder (DRILL-02b), which projects it
+//      through its own allow list rather than through any client read.
 //   2. The save sends ONE column. A coach with an editor open holds a drill
 //      that another coach may have renamed since; a whole-row update would put
 //      the stale title back. This one cannot, whatever it is holding.
@@ -3395,6 +3407,53 @@ export function useUpdateClub() {
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['club'] }),
+  })
+}
+
+// ---- The club's age group list (0053) -------------------------------------
+// Its OWN read rather than a column on the club read, so the one club read
+// the shell, the sign in screen and the Account screen depend on keeps
+// working against a database this column has not reached yet: a client
+// deployed ahead of the apply loses the list (and falls back to the
+// defaults) rather than the club. Both directions of the write go through
+// normaliseAgeGroups (trimmed, distinct, bounded), which is the shape
+// clubs_age_groups_valid accepts, and the readback is returned so the screen
+// compares what the row holds with what it sent rather than trusting a
+// request that returned.
+
+const CLUB_AGE_GROUPS_KEY = ['club', 'age_groups']
+
+export function useClubAgeGroups(enabled = true) {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: CLUB_AGE_GROUPS_KEY,
+    enabled: enabled && !!user,
+    queryFn: async (): Promise<string[]> => {
+      const { data, error } = await supabase.from('clubs').select('age_groups').limit(1)
+      if (error) throw error
+      const row = (data as { age_groups: string[] | null }[])[0]
+      return normaliseAgeGroups(Array.isArray(row?.age_groups) ? row.age_groups : [])
+    },
+  })
+}
+
+export function useUpdateClubAgeGroups() {
+  const qc = useQueryClient()
+  return useMutation<string[], Error, { id: string; ageGroups: readonly string[] }>({
+    mutationFn: async ({ id, ageGroups }) => {
+      const { data, error } = await supabase
+        .from('clubs')
+        .update({ age_groups: normaliseAgeGroups(ageGroups) })
+        .eq('id', id)
+        .select('age_groups')
+      if (error) throw error
+      const row = (data as { age_groups: string[] | null }[])[0]
+      // Zero rows back is a refusal the policy expressed as silence: the
+      // caller does not hold club.manage, or the club is not theirs.
+      if (!row) throw new Error('The age groups were not saved. You may not hold club.manage.')
+      return normaliseAgeGroups(Array.isArray(row.age_groups) ? row.age_groups : [])
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: CLUB_AGE_GROUPS_KEY }),
   })
 }
 
@@ -5592,6 +5651,167 @@ export function useDeleteVenue() {
       qc.invalidateQueries({ queryKey: ['venues'] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
+  })
+}
+
+// ---- Venue layouts (club.manage) -------------------------------------------
+// Where the stations and the games go at one venue, for one season and one
+// age group (0053, COACH-5). Reads are club wide, because a coach needs to
+// see where the stations go and a layout names no child; writes are the
+// admin surface. The shape is read and written by src/lib/venueLayout.ts
+// alone, field by field, and the database restates its allow list as a
+// check constraint, so nothing outside the shape can reach the row from
+// here or from anywhere else.
+
+interface VenueLayoutRow {
+  id: string
+  club_id: string
+  venue_id: string
+  season_id: string
+  age_group: string
+  kind: string
+  slots: number
+  zones: unknown
+  created_at: string
+}
+
+const VENUE_LAYOUT_COLS = 'id, club_id, venue_id, season_id, age_group, kind, slots, zones, created_at'
+
+// The row as the screens consume it. A kind or a slot count outside the
+// vocabulary cannot be stored (venue_layouts_kind_valid,
+// venue_layouts_slots_valid), so a row that reads as one is treated as
+// unreadable rather than drawn as something it is not.
+function toVenueLayout(r: VenueLayoutRow): VenueLayout {
+  const kind: LayoutKind = r.kind === 'games' ? 'games' : 'stations'
+  const readable = (r.kind === 'stations' || r.kind === 'games') && isLayoutShape(kind, r.slots)
+  return {
+    id: r.id,
+    venueId: r.venue_id,
+    seasonId: r.season_id,
+    ageGroup: r.age_group,
+    kind,
+    slots: r.slots,
+    zones: readable ? parseVenueLayoutZones(r.zones, r.slots) : null,
+    storedZones: r.zones,
+  }
+}
+
+// Every layout the club holds. A dozen rows per venue per season, so one
+// read serves the admin screen and every session that resolves a layout.
+// Paged deterministically until a short page, because the Data API caps a
+// response at 1,000 rows and a club that keeps every season's layouts would
+// otherwise have its newest silently missing and reported as not drawn.
+const VENUE_LAYOUT_PAGE = 1000
+
+export function useVenueLayouts(enabled = true) {
+  return useQuery({
+    queryKey: ['venue_layouts'],
+    enabled,
+    queryFn: async (): Promise<VenueLayout[]> => {
+      const rows: VenueLayoutRow[] = []
+      for (let from = 0; ; from += VENUE_LAYOUT_PAGE) {
+        const { data, error } = await supabase
+          .from('venue_layouts')
+          .select(VENUE_LAYOUT_COLS)
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, from + VENUE_LAYOUT_PAGE - 1)
+        if (error) throw error
+        const page = (data ?? []) as unknown as VenueLayoutRow[]
+        rows.push(...page)
+        if (page.length < VENUE_LAYOUT_PAGE) break
+      }
+      return rows.map(toVenueLayout)
+    },
+  })
+}
+
+// What a save sends: the scope, the shape and the zones. `id` names the row
+// to redraw; without it the layout is new. The scope is the unique key, so a
+// second admin drawing the same shape in the same scope at the same moment
+// is refused by venue_layouts_scope_unique rather than silently winning, and
+// the screen reports it as a layout somebody else drew.
+export interface SaveVenueLayoutInput {
+  id?: string
+  venueId: string
+  seasonId: string
+  ageGroup: string
+  shape: LayoutShape
+  zones: VenueLayoutZones
+  // For a redraw: the stored value the draft opened on, exactly as the read
+  // carried it. The update is CONDITIONAL on the row still holding it, so
+  // two admins who opened one layout cannot silently overwrite each other:
+  // the second save finds no row and is refused as changed elsewhere.
+  expectedZones?: unknown
+}
+
+export function isVenueLayoutScopeTaken(error: unknown): boolean {
+  const e = error as { code?: string; message?: string } | null
+  return !!e && (e.code === '23505' || /venue_layouts_scope_unique/.test(e.message ?? ''))
+}
+
+// A redraw that found no row holding the value it opened on: somebody else
+// redrew or removed the layout first.
+export class VenueLayoutChangedError extends Error {
+  constructor() {
+    super('The layout was changed by somebody else since it was opened.')
+    this.name = 'VenueLayoutChangedError'
+  }
+}
+
+// Returns the authoritative readback, so the screen compares what the row
+// holds with what it drew and says Saved only when the two agree.
+export function useSaveVenueLayout() {
+  const qc = useQueryClient()
+  const { profile } = useAuth()
+  return useMutation<VenueLayout, Error, SaveVenueLayoutInput>({
+    mutationFn: async (input) => {
+      if (!profile?.club_id) throw new Error('You must be signed in to draw a layout.')
+      const zones = serialiseVenueLayoutZones(input.zones, input.shape)
+      // jsonb equality is by value, so the row matches exactly when it still
+      // holds what the read returned, whatever key order the wire used. The
+      // value is sent as JSON text: postgrest-js interpolates an eq value
+      // with a template string, so an object would reach the server as
+      // "[object Object]" and be refused as a jsonb literal (22P02).
+      const query = input.id
+        ? supabase
+            .from('venue_layouts')
+            .update({ zones })
+            .eq('id', input.id)
+            .eq('zones', JSON.stringify(input.expectedZones ?? null))
+        : supabase.from('venue_layouts').insert({
+            club_id: profile.club_id,
+            venue_id: input.venueId,
+            season_id: input.seasonId,
+            age_group: input.ageGroup,
+            kind: input.shape.kind,
+            slots: input.shape.slots,
+            zones,
+          })
+      const { data, error } = await query.select(VENUE_LAYOUT_COLS)
+      if (error) throw error
+      const row = (data as unknown as VenueLayoutRow[])[0]
+      // Zero rows back from an update is not a save. For a redraw it is the
+      // conditional above finding no row: the layout was redrawn or removed
+      // by somebody else, or the caller lost club.manage; either way the
+      // draft does not land.
+      if (!row && input.id) throw new VenueLayoutChangedError()
+      if (!row) throw new Error('The layout was not saved. You may not hold club.manage.')
+      return toVenueLayout(row)
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['venue_layouts'] }),
+  })
+}
+
+export function useDeleteVenueLayout() {
+  const qc = useQueryClient()
+  return useMutation<void, Error, string>({
+    mutationFn: async (id) => {
+      const { data, error } = await supabase.from('venue_layouts').delete().eq('id', id).select('id')
+      if (error) throw error
+      if (!data || data.length === 0) throw new Error('The layout was not removed. It may already be gone, or you may not hold club.manage.')
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['venue_layouts'] }),
   })
 }
 

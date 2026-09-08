@@ -71,6 +71,9 @@ vi.mock('../lib/queries', () => ({
   // event's location names. Empty here: this file is about which rows the
   // container offers, and the venue rule has its own tests.
   useVenues: () => query([]),
+  // The club's age group list (COACH-5), read so a new session starts on it;
+  // empty here, so the builder keeps its own default.
+  useClubAgeGroups: () => query([]),
   // The duplicate link refusal (0048) is recognised by class and the catch up
   // refetch is a named hook, so both are stubbed here rather than dragging a
   // query client into a static render.

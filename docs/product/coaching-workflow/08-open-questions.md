@@ -37,7 +37,18 @@ feed entry.
 ### R2. How is `venue_layouts` audited?
 
 **In:** COACH-5 (M2). **Recommended: create, update and delete, at the same
-granularity as venues, under new source values.**
+granularity as venues, under new source values.** **Decided: yes**, in
+`0053_venue_layouts.sql`: `audit_venue_layouts` writes `venue_layout.created`,
+`venue_layout.updated` with the changed field NAMES from the allow list
+(zones, venue_id, season_id, age_group, kind, slots) and `venue_layout.deleted`
+through the existing private writer, under the entity type `venue_layout`. The
+"new source values" are the three actions and the entity type;
+`audit_events.source` is the provenance channel and gains nothing. The trigger
+function's EXECUTE is revoked from public, anon and authenticated, which is
+stricter than `audit_venues()`, and the self-verification reads the stored
+body back to require that every `array_append` carries a field name literal.
+A change to `clubs.age_groups` writes no event, stated rather than overlooked:
+`clubs` has never carried a trigger.
 
 Worth stating alongside it: because the layout is a table rather than a column on
 `venues`, `audit_venues()` and `describeActivityEvent`'s "Venue renamed" label

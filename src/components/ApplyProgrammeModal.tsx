@@ -12,7 +12,8 @@ import { useMemo, useRef, useState } from 'react'
 import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
-import { useTeams, useUpsertSession, useVenues } from '../lib/queries'
+import { useClubAgeGroups, useTeams, useUpsertSession, useVenues } from '../lib/queries'
+import { LEGACY_DEFAULT_AGE_GROUP, ageGroupOptions, defaultAgeGroup } from '../lib/ageGroups'
 import type { Venue } from '../lib/venues'
 import { logSessionWriteError, stableCreateId } from '../lib/sessionSubmit'
 import { sessionCoversAnyTeam } from '../lib/sessionTeams'
@@ -20,7 +21,6 @@ import { Icon } from './icons'
 import { Modal } from './ui'
 import type { Activity, Programme, Session, Team, Template } from '../lib/data'
 
-const AGE_GROUPS = ['U6s', 'U7s', 'U8s', 'U9s', 'U10s', 'U11s', 'U12s']
 // Monday-first display order over Date.getDay() numbering.
 const WEEKDAYS: { value: number; label: string }[] = [
   { value: 1, label: 'Monday' },
@@ -83,6 +83,7 @@ export function ApplyProgrammeFormView({
   onTeamId,
   ageGroup,
   onAgeGroup,
+  ageGroups,
   startDate,
   onStartDate,
   weekday,
@@ -107,6 +108,9 @@ export function ApplyProgrammeFormView({
   onTeamId: (v: string) => void
   ageGroup: string
   onAgeGroup: (v: string) => void
+  // The club's age group list (0053); the defaults while it is unknown or
+  // unset, and always the current label (src/lib/ageGroups.ts).
+  ageGroups?: readonly string[]
   startDate: string
   onStartDate: (v: string) => void
   weekday: number
@@ -156,7 +160,7 @@ export function ApplyProgrammeFormView({
         <div className="field" style={{ flex: 1, minWidth: 130 }}>
           <label>Age group</label>
           <select value={ageGroup} disabled={saving} onChange={(e) => onAgeGroup(e.target.value)}>
-            {AGE_GROUPS.map((a) => (
+            {ageGroupOptions(ageGroups, ageGroup).map((a) => (
               <option key={a}>{a}</option>
             ))}
           </select>
@@ -269,6 +273,7 @@ export function ApplyProgrammeModal({
   const { data: teams = [] } = useTeams()
   const upsert = useUpsertSession()
   const { data: venues = [] } = useVenues()
+  const { data: clubAgeGroups } = useClubAgeGroups()
 
   const weekCount = Math.max(programme.weeks, ...Object.keys(weekTemplates).map(Number), 1)
   const weeks = Array.from({ length: weekCount }, (_, i) => i + 1)
@@ -279,7 +284,15 @@ export function ApplyProgrammeModal({
   const [weekday, setWeekday] = useState(() => weekdayOf(isoAddDays(todayIso(), 7)))
   const [time, setTime] = useState('17:30')
   const [venueId, setVenueId] = useState('')
-  const [ageGroup, setAgeGroup] = useState('U8s')
+  const [ageGroup, setAgeGroup] = useState(LEGACY_DEFAULT_AGE_GROUP)
+  // Once the club's list answers, the run starts on it rather than on the
+  // one label it always started on (COACH-5); a label the coach has already
+  // chosen from the list is kept.
+  const [ageSeeded, setAgeSeeded] = useState(false)
+  if (!ageSeeded && clubAgeGroups && clubAgeGroups.length > 0) {
+    setAgeSeeded(true)
+    setAgeGroup(defaultAgeGroup(clubAgeGroups, ageGroup))
+  }
   // Per-week date edits survive until the series itself moves.
   const [overrides, setOverrides] = useState<Record<number, string>>({})
   const [error, setError] = useState<string | null>(null)
@@ -433,6 +446,7 @@ export function ApplyProgrammeModal({
       onTeamId={setTeamId}
       ageGroup={ageGroup}
       onAgeGroup={setAgeGroup}
+      ageGroups={clubAgeGroups}
       startDate={startDate}
       onStartDate={pickStart}
       weekday={weekday}
