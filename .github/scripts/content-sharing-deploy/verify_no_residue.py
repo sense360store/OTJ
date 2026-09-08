@@ -13,7 +13,7 @@ reviewed values. A breach stops the deploy outright:
   - every drill is internal_only;
   - every media row is internal_only;
   - the migration ledger's newest version is exactly EXPECTED_LAST_MIGRATION,
-    currently 20260904174142 (0052, atomic_team_order);
+    currently 20260908094005 (0053, venue_layouts);
   - no pg_cron job references content_share (no cleanup schedule was created).
 
 LIVE SHARING STATE, which is legitimate mutable product data and is therefore
@@ -115,18 +115,16 @@ import urllib.parse
 # which would let an unreviewed migration land unnoticed.
 #
 # It moves in lockstep with the migration actually applied to hosted. The value
-# below is RECONCILED: 0052_atomic_team_order was deliberately applied to the
+# below is RECONCILED: 0053_venue_layouts was deliberately applied to the
 # hosted project through the gated production process (workflow run
-# 33901817120, from the reviewed commit
-# 973de7d692569c1db495d18e9ecb6001dc7160d0 on the COACH-1B database branch,
-# pull request #226, at 17:41 UTC on 4 September 2026, nine minutes before
-# that branch merged), and hosted assigned it this exact version,
-# 20260904174142. It was read back from
+# 34211218951, from the reviewed commit
+# 02762287925964c5379739e8805caf127bb57ca8, which is main carrying the
+# COACH-5 merge of pull request #231, on 8 September 2026), and hosted
+# assigned it this exact version, 20260908094005. It was read back from
 # supabase_migrations.schema_migrations after the apply and confirmed to be
 # the unique newest ledger entry, appearing exactly once with no row newer,
-# and with the previously pinned 20260902150212 / team_sort_order now the
-# entry before it. The migration adds one function and writes no row: every
-# team's position was null before the apply and is null after it.
+# and with the previously pinned 20260904174142 / atomic_team_order now the
+# entry before it.
 #
 # The row carries the evidence the gated workflow
 # (.github/workflows/apply-production-migration.yml) records. Each fact below
@@ -135,68 +133,95 @@ import urllib.parse
 #
 #   ASSERTED BY THE POST-APPLY GATE (verify_hosted_state.assert_post), and
 #   read back again here:
-#     - the row is the unique newest one, recorded at the newest version, in
-#       a ledger of 47 rows with exactly one row named atomic_team_order;
-#     - the VERSION of the row before it is 20260902150212. Only the version:
+#     - the row is the unique newest one, recorded at the newest version,
+#       with exactly one row carrying the name venue_layouts (assert_post
+#       compares target_rows against 1). The ledger's TOTAL row count is
+#       NOT asserted: assert_post reads rows_total only to print it, so a
+#       ledger with any number of older rows passes. The count is under
+#       the readback below, where it belongs;
+#     - the VERSION of the row before it is 20260904174142. Only the version:
 #       assert_post compares second_version against expected_previous_version
 #       and never compares second_name, which it reads but uses only in the
 #       failure message and the report table. The NAME below is readback;
 #     - statements holds exactly one entry, and md5(statements[1]) is
-#       8a3d8a6778e343bacd3ebacb149d5e5a, the reviewed file with its trailing
-#       newline stripped (56271 bytes). That is the strongest single fact
+#       4a0ad5365bc501c370160e9d06620fda, the reviewed file with its trailing
+#       newline stripped (69853 bytes). That is the strongest single fact
 #       here: what production ran is the reviewed file byte for byte, not a
-#       file that merely passed the same probes;
-#     - and, through the three registered object probes in
-#       reviewed_migrations.py: that public.set_team_order(uuid[], integer[])
-#       resolves (to_regprocedure, never a textual signature cast, for the
-#       reason 0049's review found); that it is SECURITY DEFINER with an
-#       empty search_path (pg_proc.prosecdef and proconfig, the expected
-#       value composed with chr(34) because the verifier refuses a probe
-#       carrying a quote); and that authenticated holds EXECUTE on it while
-#       anon does not, with anon tested rather than inferred from PUBLIC.
+#       file that merely passed the same probes. It was checked against the
+#       file in this repository rather than trusted from the run log;
+#     - and, through the five registered object probes in
+#       reviewed_migrations.py: that public.clubs.age_groups is a text array,
+#       not null, defaulting to empty (the SHAPE with the name, so a nullable
+#       column or a different element type would not satisfy it); that
+#       public.venue_layouts exists as an ordinary table WITH ROW LEVEL
+#       SECURITY ENABLED, read from pg_class.relrowsecurity rather than from
+#       mere presence; that venue_layouts_scope_unique is a UNIQUE CONSTRAINT
+#       on that table rather than a plain index; that
+#       public.venue_layout_is_valid(jsonb, integer) RESOLVES with its two
+#       argument signature (to_regprocedure, never a textual signature cast,
+#       for the reason 0049's review found), and no more than that: the
+#       probe does not evaluate the predicate and does not check that
+#       venue_layouts_zones_shape invokes it, so it does NOT establish that
+#       a four zone value on a five slot row is unrepresentable. That rests
+#       on the migration's own self-verification, which drives the predicate
+#       through the canonical layouts and some fifty refused values inside
+#       the apply transaction, and on review of the SQL; and that
+#       audit_venue_layouts() is SECURITY DEFINER with an empty search_path
+#       and is executable by NEITHER authenticated NOR anon, the one place
+#       this migration is deliberately stricter than audit_venues().
 #
 #   READ BACK HERE ONLY, and NOT asserted by that gate:
 #     - created_by is
-#       github-actions:apply-production-migration@973de7d692569c1db495d18e9ecb6001dc7160d0,
+#       github-actions:apply-production-migration@02762287925964c5379739e8805caf127bb57ca8,
 #       naming the workflow and the commit it ran from. The gate never selects
 #       this column at all;
-#     - idempotency_key is otj:migration:0052_atomic_team_order against a
-#       UNIQUE column, so the same migration cannot be applied twice. The gate
+#     - idempotency_key is otj:migration:0053_venue_layouts against a UNIQUE
+#       column, so the same migration cannot be applied twice. The gate
 #       checks that key only BEFORE the apply, to prove the migration had not
-#       already run; assert_post does not re-read it. That key is what
-#       refuses a second apply through the workflow, and it carries more
-#       weight here than it did for 0051: create or replace function is
-#       idempotent where add column is not, so the migration's own
-#       self-verification would NOT refuse a second raw apply;
-#     - PUBLIC does not hold EXECUTE either. The probe tests anon, which is
-#       the role a browser reaches PostgREST as when signed out; PUBLIC is
-#       the grant that would have made that moot, and only the readback
-#       excludes it.
+#       already run; assert_post does not re-read it. It carries the weight
+#       here that it carried for 0052 rather than for 0051: create table if
+#       not exists and add column if not exists are idempotent where a bare
+#       add column is not, so the migration's own self-verification would not
+#       necessarily refuse a second raw apply;
+#     - PUBLIC does not hold EXECUTE on audit_venue_layouts() either. The
+#       probe tests authenticated and anon, which are the roles a browser
+#       reaches PostgREST as; PUBLIC is the grant that would have made both
+#       moot, and only the readback excludes it;
+#     - the table grants are exactly what was reviewed: authenticated holds
+#       DELETE, INSERT, SELECT and UPDATE, and anon holds nothing at all. The
+#       probes above read the trigger function's privileges, not the table's;
+#     - the ledger holds 48 rows in total. Read back only, for the reason
+#       above: nothing in the gate compares it.
 #
-# Those probes are why the function's existence and its security posture
+# Those probes are why the objects' existence and their security posture
 # belong above and not here: they are asserted by the gate on every run, not
 # merely read back once. What the readback adds, and the ONLY thing it adds,
-# beyond PUBLIC above, is the state 0052 promised to leave UNTOUCHED, which
-# no probe of a newly created function can speak to: public.teams still holds
-# five rows and none carries a position, which is what "writes no row" means
-# on the live rows; teams still carries exactly its two policies and exactly
-# its one non internal trigger, the audit writer; and
-# teams_sort_order_unique is still CREATE UNIQUE INDEX
-# teams_sort_order_unique ON public.teams USING btree (club_id, sort_order)
-# WHERE (sort_order IS NOT NULL), the definition 0051's apply left, so the
-# last guard the function's clear-then-place is written around is the same
-# guard.
+# beyond PUBLIC and the table grants above, is the state 0053 promised to
+# leave UNTOUCHED, which no probe of a newly created object can speak to:
+# public.venue_layouts holds zero rows, which is what "creates the table and
+# writes no row" means on the live database; both public.clubs rows carry
+# age_groups of exactly '{}', so no club was given a vocabulary it did not
+# choose; and venue_layouts carries exactly its two reviewed policies and
+# exactly its one non internal trigger, the audit writer.
 #
-# What NONE of that establishes is the other half of "0052 adds one function
-# and NOTHING else". The probes look at that one function, and the readback
-# at it and at the four things above; neither inventories every table,
-# column, index, policy or trigger, so nothing in either could tell a 0052
-# that added only the function from one that added it and something more.
-# That property rests on REVIEW OF THE MIGRATION SQL and on the file's own
-# before and after fingerprints of the team rows, their positions whole, the
-# audit rows, the policies, the grants, the triggers and the index
-# definition, which is what the gated production process exists to provide,
-# and this block claims no more than that.
+# One promise in that list is NOT established by any readback, and saying so
+# is the point of this paragraph. 29 sessions carry a non empty age_group
+# label, and a reading taken AFTER the apply cannot tell that number from the
+# number before it. That no session label was rewritten rests on the
+# migration's own BEFORE and AFTER fingerprint of the session age groups,
+# taken inside the same transaction, not on anything here.
+#
+# What NONE of that establishes is the other half of "0053 adds one column
+# and one table and NOTHING else". The probes look at those objects, and the
+# readback at them and at the things above; neither inventories every table,
+# column, index, policy or trigger, so nothing in either could tell a 0053
+# that added only them from one that added them and something more. That
+# property rests on REVIEW OF THE MIGRATION SQL and on the file's own before
+# and after fingerprints of the club, venue and season rows, the session age
+# groups, the audit row count, the capability catalogue and the policy, grant
+# and trigger sets of clubs, venues and seasons, which is what the gated
+# production process exists to provide, and this block claims no more than
+# that.
 #
 # This constant's move is a RECONCILIATION of an already applied, already
 # reviewed migration. Changing it deploys nothing, applies nothing and alters
@@ -207,7 +232,7 @@ import urllib.parse
 # so it cannot be known before the apply happens. The order is always: apply ->
 # read back the recorded version -> set this constant to exactly that value in
 # a reviewed pull request -> only then deploy.
-EXPECTED_LAST_MIGRATION = "20260904174142"  # 0052_atomic_team_order
+EXPECTED_LAST_MIGRATION = "20260908094005"  # 0053_venue_layouts
 
 # The EXACT set of club ids permitted to have public_sharing_enabled true.
 # This is a deployment review pin in the same sense as
