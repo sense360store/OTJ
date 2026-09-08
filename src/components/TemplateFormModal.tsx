@@ -8,6 +8,7 @@
 // activity whose drill has since been deleted renders the removed drill
 // placeholder and stays editable, so the template survives the gap.
 import { useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { Icon } from './icons'
 import { ListInput, Modal } from './ui'
 import { AddDrillModal } from './AddDrillModal'
@@ -17,6 +18,7 @@ import type { TemplateInput } from '../lib/queries'
 import { ActivityStructureSummary } from './ActivityRoleControls'
 import { type ActivityRole, applyRole } from '../lib/activityRole'
 import { ActivityListEditor } from './ActivityListEditor'
+import { usePlanDrillAuthoring } from './PlanDrillAuthoring'
 
 // COACH-10: the activity row, the add bar and the list itself live in the
 // shared authoring seam now, mounted below and by the dated-session planner
@@ -36,12 +38,23 @@ function fromTemplate(template?: Template): TemplateInput {
   }
 }
 
-export function TemplateFormModal({ template, onClose }: { template?: Template; onClose: () => void }) {
+export function TemplateFormModal({
+  template,
+  onClose,
+  initialForm,
+}: {
+  template?: Template
+  onClose: () => void
+  // COACH-11. The draft that went to the Drill Maker and came back, adopted
+  // in place of the template's stored fields. See RestoredTemplateEditor.
+  initialForm?: TemplateInput
+}) {
   const insert = useInsertTemplate()
   const update = useUpdateTemplate()
   const drillById = useDrillMap()
   const actTitle = useActivityTitle()
-  const [form, setForm] = useState<TemplateInput>(() => fromTemplate(template))
+  const { pathname } = useLocation()
+  const [form, setForm] = useState<TemplateInput>(() => initialForm ?? fromTemplate(template))
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const pending = insert.isPending || update.isPending
@@ -82,6 +95,19 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
       return { ...f, activities: a }
     })
   }
+
+  // COACH-11. New drill and Turn into a drill, through the one shared hook.
+  // This modal unmounts on the way to the Drill Maker, so the whole form is
+  // what the hook keeps; the screen that opened the modal reopens it on
+  // the way back (RestoredTemplateEditor), at the address it left from.
+  const authoring = usePlanDrillAuthoring<TemplateInput>({
+    host: 'template',
+    id: template?.id ?? null,
+    returnPath: pathname,
+    activities: form.activities,
+    onActivities: (activities) => set('activities', activities),
+    draftWith: (activities) => ({ ...form, activities }),
+  })
 
   const submit = () => {
     setError(null)
@@ -141,6 +167,11 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
           activities={form.activities}
           variant={{
             kind: 'plan',
+            // The same pending state Cancel and Save already freeze on. The
+            // list froze on nothing until COACH-11 put a write in its add
+            // bar; see the variant's own note for the two orderings that
+            // created a drill the saved week never carried.
+            busy: pending,
             meta: (a) => {
               const drill = a.drillId ? drillById[a.drillId] : null
               return { title: actTitle(a), skill: drill?.skill ?? null }
@@ -153,7 +184,10 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
           onRemove={removeAct}
           onAddLibrary={() => setAdding(true)}
           onAddCustom={() => set('activities', [...form.activities, { phase: 'Skill', title: 'Custom activity', duration: 10 }])}
+          onNewDrill={authoring.onNewDrill}
+          onTurnIntoDrill={authoring.onTurnIntoDrill}
         />
+        {authoring.note}
       </div>
 
       <div className="field">
@@ -198,6 +232,7 @@ export function TemplateFormModal({ template, onClose }: { template?: Template; 
           }}
         />
       )}
+      {authoring.modal}
     </Modal>
   )
 }

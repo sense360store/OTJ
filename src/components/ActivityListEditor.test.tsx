@@ -21,7 +21,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ActivityListEditor, type DragHandlers } from './ActivityListEditor'
 import { NOT_RUNNING_LABEL, type ActivityRole } from '../lib/activityRole'
-import type { Activity, Phase } from '../lib/data'
+import type { Activity, Drill, Phase } from '../lib/data'
 
 const noop = () => {}
 
@@ -155,6 +155,7 @@ function planEditor(s: SessionSpies, over: { activities?: Activity[] } = {}) {
       activities={over.activities ?? PLAN}
       variant={{
         kind: 'plan',
+        busy: false,
         meta: (a) => ({ title: a.title ?? 'Untitled', skill: null }),
         onMove: s.onMove,
       }}
@@ -398,15 +399,209 @@ describe('both hosts still agree on what the surface shows', () => {
     expect(html).toContain('Add from library')
   })
 
-  it('keeps the two add affordances and no more on both surfaces', () => {
-    // COACH-11 adds New drill and Draw it. Until then, whatever each host
-    // could add before this seam existed is exactly what it may add now.
+  it('keeps the two add affordances and no more when a host supplies no drill authoring', () => {
+    // COACH-11's New drill and Turn into a drill arrive through optional
+    // callbacks. A host that passes neither (a member without drills.create
+    // is one) gets exactly what each host could add before this seam existed.
     for (const html of [sessionHtml(), planHtml()]) {
       expect(html.match(/add-slot/g)).toHaveLength(2)
       expect(html).toContain('Add from library')
       expect(html).toContain('Add custom')
       expect(html).not.toContain('New drill')
+      expect(html).not.toContain('Turn into a drill')
       expect(html).not.toContain('Draw it')
+    }
+  })
+})
+
+// =====================================================================
+// COACH-11 at the seam: New drill in the add bar, Turn into a drill on a
+// custom row, on both surfaces, reaching the host with the right index.
+// =====================================================================
+
+function authoringSpies() {
+  return {
+    ...spies(),
+    onNewDrill: vi.fn<() => void>(),
+    onTurnIntoDrill: vi.fn<(i: number) => void>(),
+  }
+}
+type AuthoringSpies = ReturnType<typeof authoringSpies>
+
+// A drill row between two custom rows, so "only a custom row offers it" is
+// asserted against a real mix rather than an all custom plan.
+const MIXED: Activity[] = [act({ title: 'Arrival games' }), act({ drillId: 'd1', title: undefined }), act({ slot: 'station' })]
+
+function withAuthoring(kind: 'session' | 'plan', s: AuthoringSpies, over: { readOnly?: boolean; busy?: boolean } = {}) {
+  const shared = {
+    activities: MIXED,
+    onPhase: s.onPhase,
+    onDuration: s.onDuration,
+    onRole: s.onRole,
+    onRemove: s.onRemove,
+    onAddLibrary: s.onAddLibrary,
+    onAddCustom: s.onAddCustom,
+    onNewDrill: s.onNewDrill,
+    onTurnIntoDrill: s.onTurnIntoDrill,
+  }
+  if (kind === 'plan') {
+    return <ActivityListEditor {...shared} variant={{ kind: 'plan', busy: over.busy ?? false, meta: (a) => ({ title: a.title ?? 'Rondo', skill: null }), onMove: s.onMove }} />
+  }
+  return (
+    <ActivityListEditor
+      {...shared}
+      variant={{
+        kind: 'session',
+        readOnly: over.readOnly ?? false,
+        busy: over.busy ?? false,
+        empty: null,
+        expandedIdx: null,
+        onToggle: s.onToggle,
+        onStandDown: s.onStandDown,
+        draggingIdx: null,
+        dragHandlersFor: s.dragHandlersFor,
+        content: (a) => ({
+          title: a.title ?? 'Rondo',
+          drill: a.drillId ? ({ id: a.drillId, title: 'Rondo', skill: '', equipment: [], points: [], easier: [], harder: [] } as unknown as Drill) : null,
+          thumb: null,
+          expandedMedia: null,
+          expandedDiagram: null,
+          drillHref: a.drillId ? '/drill/d1' : '',
+        }),
+      }}
+    />
+  )
+}
+
+describe('COACH-11: creating a drill from either surface', () => {
+  it('offers New drill as a third add action on both surfaces, reaching the host only when pressed', () => {
+    for (const kind of ['session', 'plan'] as const) {
+      const s = authoringSpies()
+      const els = elements(withAuthoring(kind, s))
+      const adds = buttonsBy(els, (e) => e.props.className === 'add-slot')
+      expect(adds.map((b) => textOf(b.props))).toEqual(['Add from library', 'Add custom', 'New drill'])
+      expect(s.onNewDrill).not.toHaveBeenCalled()
+      ;(adds[2].props.onClick as () => void)()
+      expect(s.onNewDrill).toHaveBeenCalledOnce()
+      expect(s.onAddLibrary).not.toHaveBeenCalled()
+      expect(s.onAddCustom).not.toHaveBeenCalled()
+    }
+  })
+
+  it('offers Turn into a drill on the custom rows alone, with each row its own index', () => {
+    for (const kind of ['session', 'plan'] as const) {
+      const s = authoringSpies()
+      const els = elements(withAuthoring(kind, s))
+      const turns = buttonsBy(els, (e) => textOf(e.props) === 'Turn into a drill')
+      // Rows 0 and 2 are custom; row 1 has a drill and has nothing to turn.
+      expect(turns).toHaveLength(2)
+      ;(turns[1].props.onClick as () => void)()
+      expect(s.onTurnIntoDrill).toHaveBeenCalledExactlyOnceWith(2)
+      ;(turns[0].props.onClick as () => void)()
+      expect(s.onTurnIntoDrill).toHaveBeenLastCalledWith(0)
+      // A press turns; it never removes, re-phases or re-times the row.
+      expect(s.onRemove).not.toHaveBeenCalled()
+      expect(s.onPhase).not.toHaveBeenCalled()
+      expect(s.onDuration).not.toHaveBeenCalled()
+    }
+  })
+
+  it('never offers Turn into a drill on a row whose drill was deleted', () => {
+    // The dated row renders the custom body when the drill resolves to
+    // null, and a deleted drill resolves to null too. The offer keys on the
+    // activity's own drillId, because the plan rules refuse to replace a
+    // drill row and the created drill would reach no plan.
+    const s = authoringSpies()
+    const removed: Activity[] = [act({ drillId: 'd-gone', title: undefined })]
+    const html = renderToStaticMarkup(
+      <ActivityListEditor
+        activities={removed}
+        variant={{
+          kind: 'session',
+          readOnly: false,
+          busy: false,
+          empty: null,
+          expandedIdx: null,
+          onToggle: s.onToggle,
+          onStandDown: s.onStandDown,
+          draggingIdx: null,
+          dragHandlersFor: s.dragHandlersFor,
+          content: () => ({ title: 'Removed drill', drill: null, thumb: null, expandedMedia: null, expandedDiagram: null, drillHref: '' }),
+        }}
+        onPhase={s.onPhase}
+        onDuration={s.onDuration}
+        onRole={s.onRole}
+        onRemove={s.onRemove}
+        onAddLibrary={s.onAddLibrary}
+        onAddCustom={s.onAddCustom}
+        onNewDrill={s.onNewDrill}
+        onTurnIntoDrill={s.onTurnIntoDrill}
+      />,
+    )
+    expect(html).toContain('Removed drill')
+    expect(html).not.toContain('Turn into a drill')
+    expect(html).toContain('New drill')
+  })
+
+  it('freezes both with every other write control while a session write is in flight', () => {
+    const s = authoringSpies()
+    const els = elements(withAuthoring('session', s, { busy: true }))
+    const newDrill = buttonsBy(els, (e) => textOf(e.props) === 'New drill')[0]
+    expect(newDrill.props.disabled).toBe(true)
+    for (const t of buttonsBy(els, (e) => textOf(e.props) === 'Turn into a drill')) expect(t.props.disabled).toBe(true)
+  })
+
+  it('offers neither to a read only viewer of a session', () => {
+    const html = renderToStaticMarkup(withAuthoring('session', authoringSpies(), { readOnly: true }))
+    expect(html).not.toContain('New drill')
+    expect(html).not.toContain('Turn into a drill')
+    expect(html).not.toContain('add-slot')
+  })
+
+  it('draws the affordances with the shared vocabulary, on both surfaces', () => {
+    for (const kind of ['session', 'plan'] as const) {
+      const html = renderToStaticMarkup(withAuthoring(kind, authoringSpies()))
+      // The add bar is a class, so the third action wraps rather than clips.
+      expect(html).toContain('class="add-bar"')
+      expect(html.match(/class="add-slot"/g)).toHaveLength(3)
+      // Turn into a drill is the Button primitive's quiet small variant.
+      expect(html).toMatch(/<button type="button" class="btn btn-quiet btn-sm act-turn"[^>]*>(?:(?!<\/button>).)*Turn into a drill/)
+      // No inline style on the controls this slice owns: the phase select,
+      // the minutes field and the add bar draw from the stylesheet. (The
+      // role row beneath is COACH-2B's file and keeps its own until its
+      // wave; this asserts nothing about it.)
+      for (const tag of html.match(/<select[^>]*>|<input class="act-dur-input"[^>]*>|<button type="button" class="add-slot"[^>]*>/g) ?? []) {
+        expect(tag).not.toContain('style=')
+      }
+      expect(html).toContain('<select class="act-phase"')
+    }
+  })
+
+  it('names the two row controls, which the row never did', () => {
+    // A select with no label is a phase to a sighted coach and a list of
+    // four words to a screen reader.
+    const html = renderToStaticMarkup(withAuthoring('session', authoringSpies()))
+    expect(html).toContain('aria-label="Phase"')
+    expect(html).toContain('aria-label="Minutes"')
+  })
+  it('freezes both authoring affordances on BOTH hosts while a save is in flight', () => {
+    // Codex, second round. The week plan variant hard coded busy to false,
+    // which was harmless while every action in its bar was a local draft
+    // edit and became a defect the moment COACH-11 put a WRITE there. Both
+    // orderings lose: a template save that lands first closes the host and
+    // unmounts the drill form mid insert, and a drill insert that lands
+    // first writes into a draft whose payload the submit already captured.
+    // Either creates a library drill the saved week never carries.
+    for (const kind of ['session', 'plan'] as const) {
+      const html = renderToStaticMarkup(withAuthoring(kind, authoringSpies(), { busy: true }))
+      // Every add-bar action is disabled, New drill included.
+      for (const tag of html.match(/<button type="button" class="add-slot"[^>]*>/g) ?? []) {
+        expect(tag, kind).toContain('disabled')
+      }
+      // And so is Turn into a drill on the custom row.
+      const turn = html.match(/<button type="button" class="btn btn-quiet btn-sm act-turn"[^>]*>/g) ?? []
+      expect(turn.length, kind).toBeGreaterThan(0)
+      for (const tag of turn) expect(tag, kind).toContain('disabled')
     }
   })
 })

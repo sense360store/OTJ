@@ -581,12 +581,24 @@ export function Modal({
   // Escape and the Tab trap are handled on the dialog, which holds focus, so the
   // dialog owns its own key handling rather than a document-wide listener.
   // Escape is inert while a write is in flight (dismissible false).
+  //
+  // A KEY THIS DIALOG HANDLES IS CONSUMED. A dialog can open inside another
+  // (the week plan editor opens the drill picker and, since COACH-11, the
+  // drill form), and React events bubble through the tree whether or not a
+  // portal is involved. Left to bubble, an Escape the inner dialog answered
+  // reached the outer one's handler and closed the whole week plan editor,
+  // discarding its draft; while the inner dialog was frozen for a write in
+  // flight, the SAME Escape that it correctly ignored still closed its
+  // parent, unmounting it mid write. Tab is consumed for the same reason:
+  // the inner trap has already decided where focus goes.
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') {
+      e.stopPropagation()
       onEscapeKey('Escape')
       return
     }
     if (e.key !== 'Tab') return
+    e.stopPropagation()
     const els = focusableElements(dialogRef.current)
     if (els.length === 0) {
       e.preventDefault()

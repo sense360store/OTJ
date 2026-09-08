@@ -91,6 +91,32 @@ const SHOTS = [
   // pushes the card wide.
   ...['coach', 'parent'].flatMap((caps) => [360, 390, 1280].map((w) => ({ screen: 'home', caps, state: 'longnames', w }))),
 
+  /* ---- COACH-11, the planner and the week plan editor (VISUAL-03) ------
+     The two planning surfaces this slice touched, under the `author` set
+     that holds drills.create and under `coach`, which does not: the first
+     shows the three action add bar and Turn into a drill, the second the
+     COACH-10 bar unchanged. At 360 first, because a third action is what
+     makes the bar wrap; then the phone and desktop pair. `existing` is the
+     harness coach's own saved session with a custom row, so Turn into a
+     drill has a row to sit on. */
+  ...['author', 'coach'].flatMap((caps) => [360, 390, 1280].map((w) => ({ screen: 'planner', caps, w }))),
+  ...['author', 'coach'].flatMap((caps) => [360, 390, 1280].map((w) => ({ screen: 'planner', caps, at: 'existing', w }))),
+  ...['author', 'coach'].flatMap((caps) => [360, 390, 1280].map((w) => ({ screen: 'weekplan', caps, w }))),
+  // The drill form in plan mode, DRIVEN: New drill pressed from the add bar,
+  // Turn into a drill pressed on the custom row, and the disclosure opened.
+  // At 900 as well, where a form dialog becomes a bottom sheet.
+  ...[360, 390, 900, 1280].map((w) => ({ screen: 'planner', caps: 'author', w, open: 'newdrill' })),
+  ...[360, 390, 1280].map((w) => ({ screen: 'planner', caps: 'author', at: 'existing', w, open: 'turninto' })),
+  ...[390, 1280].map((w) => ({ screen: 'planner', caps: 'author', w, open: 'moredetails' })),
+  ...[360, 390, 1280].map((w) => ({ screen: 'weekplan', caps: 'author', w, open: 'newdrill' })),
+  // The whole round trip, driven: a drill typed and added lands as a row;
+  // Save and draw it lands in the Drill Maker with Back naming the plan; and
+  // Back lands on the plan with the row still there.
+  ...[390, 1280].map((w) => ({ screen: 'planner', caps: 'author', w, open: 'added' })),
+  ...[390, 1280].map((w) => ({ screen: 'planner', caps: 'author', w, open: 'drawing' })),
+  ...[390, 1280].map((w) => ({ screen: 'planner', caps: 'author', w, open: 'returned' })),
+  ...[390, 1280].map((w) => ({ screen: 'weekplan', caps: 'author', w, open: 'returned' })),
+
   /* ---- VISUAL-02, Registered players ---------------------------------
      The wave's primary acceptance surface, and the one that carries the two
      primitives VISUAL-01 defined and could not accept: the table with its
@@ -394,7 +420,7 @@ const name = (s, theme) =>
 
 // An overlay is shot at the viewport rather than full page: a full page shot
 // of a dialog over a two hundred row register is a picture of the register.
-const OVERLAY = new Set(['more', 'delete', 'moreactions', 'rowmenu', 'filters', 'history'])
+const OVERLAY = new Set(['more', 'delete', 'moreactions', 'rowmenu', 'filters', 'history', 'newdrill', 'turninto', 'moredetails'])
 // A feedback entry says whether it leaves a dialog up, because several of them
 // close one on the way to the outcome they claim and those ARE page shots.
 const isOverlay = (s) => !!s.dialog || !!s.feedbackEntry?.overlay || !!s.adminEntry?.overlay || OVERLAY.has(s.open)
@@ -437,6 +463,37 @@ const REACHED = {
   // wait would fail on a state that is correctly reached.
   multifilter: async (page) =>
     page.$eval('.activity-filters-btn', (el) => el.getAttribute('aria-label') === 'Filters, 2 active').catch(() => false),
+  /* ---- COACH-11's driven states ---- */
+  // The drill form in plan mode, named by its own title and by the footer
+  // action only that mode has, so the Library form could not stand in.
+  newdrill: '.modal:has-text("New drill"):has-text("Add to plan")',
+  // Turn into a drill says what it replaces.
+  turninto: '.modal:has-text("Takes the place of the custom activity")',
+  moredetails: '.modal details.form-more[open]',
+  // The typed drill is a ROW of the plan, with the title the form was given,
+  // and the form is gone.
+  added: async (page) =>
+    page
+      .evaluate(
+        () =>
+          !document.querySelector('.modal') &&
+          [...document.querySelectorAll('.ac-title')].some((e) => e.textContent === 'Overlap and finish'),
+      )
+      .catch(() => false),
+  // The Drill Maker, opened from the plan: its own chrome, and Back naming
+  // the plan rather than the drill.
+  drawing: '.dde button[aria-label="Back to the plan"]',
+  // Back from the Drill Maker: the plan again, with the created row still
+  // in it, and no token left in the address (the witness carries pathname
+  // only, so the row is the proof that the draft came back).
+  returned: async (page) =>
+    page
+      .evaluate(
+        () =>
+          !document.querySelector('.dde') &&
+          [...document.querySelectorAll('.ac-title, .ac-body h4')].some((e) => e.textContent === 'Overlap and finish'),
+      )
+      .catch(() => false),
 }
 
 // What each named state actually renders. `default` claims nothing, so it
@@ -727,6 +784,46 @@ for (const theme of ['light', 'dark']) {
     await page.evaluate(() => document.fonts.ready)
     await verifyFonts(page)
     await page.waitForTimeout(250)
+    // COACH-11: the plan mode form and the round trip, driven through the
+    // controls a coach presses. Every press is guarded: a control that stops
+    // rendering is a recorded failure rather than a thirty second abort.
+    if (s.screen === 'planner' || s.screen === 'weekplan') {
+      const press = async (nameRe) => {
+        const b = page.getByRole('button', { name: nameRe })
+        if ((await b.count()) === 0) {
+          failures++
+          console.log(`ERROR ${name(s, theme)}: no ${nameRe} button, so the ${s.open} state was never reached`)
+          return false
+        }
+        await b.first().click()
+        await page.waitForTimeout(150)
+        return true
+      }
+      const typeTitle = async () => {
+        const t = page.getByLabel('Title')
+        if ((await t.count()) === 0) {
+          failures++
+          console.log(`ERROR ${name(s, theme)}: no Title field, so the ${s.open} state was never reached`)
+          return false
+        }
+        await t.first().fill('Overlap and finish')
+        return true
+      }
+      if (s.open === 'newdrill' || s.open === 'moredetails' || s.open === 'added' || s.open === 'drawing' || s.open === 'returned') {
+        if (await press(/^New drill$/)) {
+          if (s.open === 'moredetails') await page.locator('.form-more > summary').first().click().catch(() => {})
+          if (s.open === 'added' && (await typeTitle())) await press(/^Add to plan$/)
+          if ((s.open === 'drawing' || s.open === 'returned') && (await typeTitle())) {
+            if (await press(/^Save and draw it$/)) {
+              await page.waitForSelector('.dde', { state: 'visible', timeout: 3000 }).catch(() => {})
+              if (s.open === 'returned') await press(/^Back to the plan$/)
+            }
+          }
+          await page.waitForTimeout(250)
+        }
+      }
+      if (s.open === 'turninto') await press(/^Turn into a drill$/)
+    }
     if (s.open === 'more') {
       // The matrix only asks for this with the coach capability set, where
       // the button must exist; a parent legitimately has no More.

@@ -27,9 +27,13 @@ import { Account } from '../../src/routes/Account'
 import { Feedback } from '../../src/routes/Feedback'
 import { AdminUsers } from '../../src/routes/AdminUsers'
 import { AdminTeams } from '../../src/routes/AdminTeams'
+import { Planner } from '../../src/routes/Planner'
+import { DrillDiagramEditor } from '../../src/routes/DrillDiagramEditor'
+import { TemplateFormModal } from '../../src/components/TemplateFormModal'
+import { RestoredTemplateEditor } from '../../src/components/RestoredTemplateEditor'
 import { AdminVenues } from '../../src/routes/AdminVenues'
 import { AdminVenueLayouts } from '../../src/routes/AdminVenueLayouts'
-import { ACTIVITY_BATCH_ID, ADMIN_VENUES, PAST_SEASON, SESSIONS, SPOND_TEAM_ID, harnessState } from './fixtures'
+import { ACTIVITY_BATCH_ID, ADMIN_VENUES, PAST_SEASON, PLANNER_SESSION_ID, SESSIONS, SPOND_TEAM_ID, WEEK_PLAN_TEMPLATE, harnessState } from './fixtures'
 import '../../src/styles.css'
 
 const params = new URLSearchParams(location.search)
@@ -209,6 +213,27 @@ function RouteWitness() {
    on its own would prove the screen and nothing about the boundary in front
    of it, and a fixture that answered for the guard would be a picture of a
    redirect that never happened. */
+/* COACH-11: the week plan editor, open over the Templates shell on a week
+   with a drill row and a custom row. The modal is the REAL TemplateFormModal;
+   the page behind it stands in for the Templates screen, whose grid is not
+   what this surface is about. RestoredTemplateEditor is mounted exactly as
+   the Templates screen mounts it, so the Drill Maker round trip lands back
+   here and reopens the editor on the draft. */
+function WeekPlanDemo() {
+  // Open on arrival, except on the way BACK from the Drill Maker, where the
+  // restorer below reopens the editor on the draft and a second copy of the
+  // modal would sit over it.
+  const { search } = useLocation()
+  const [open, setOpen] = useState(!search.includes('draft='))
+  return (
+    <Shell>
+      <PageHeader title="Session Templates" sub="Reusable session shells" actions={<Button variant="primary" icon={Icon.plus} onClick={() => setOpen(true)}>New template</Button>} />
+      {open && <TemplateFormModal template={WEEK_PLAN_TEMPLATE} onClose={() => setOpen(false)} />}
+      <RestoredTemplateEditor templates={[WEEK_PLAN_TEMPLATE]} />
+    </Shell>
+  )
+}
+
 function Harness() {
   if (screen === 'login' || screen === 'auth') {
     return (
@@ -258,6 +283,17 @@ function Harness() {
         </Route>
         <Route element={<RequireCap cap="teams.manage" />}>
           <Route path="/admin/teams" element={<AdminTeams />} />
+        </Route>
+        {/* COACH-11: the dated session planner and the Drill Maker it opens,
+            behind the real sessions.create guard both carry in App.tsx. The
+            Drill Maker is a full screen route outside the shell in the
+            product; here it renders inside it, which its fixed layout
+            covers, so the route witness on .content can still say where a
+            press landed. The week plan editor is its own screen, above. */}
+        <Route element={<RequireCap cap="sessions.create" />}>
+          <Route path="/planner" element={<Planner />} />
+          <Route path="/templates" element={<WeekPlanDemo />} />
+          <Route path="/drill/:id/diagram" element={<DrillDiagramEditor />} />
         </Route>
         {/* VISUAL-03 with COACH-5: the venues admin and one venue's layouts,
             behind the real club.manage guard. */}
@@ -321,8 +357,19 @@ function authEntry(): string {
   return '/'
 }
 
+// COACH-11: the planner opens on a new session by default, and on the
+// harness coach's own saved one at `at=existing`, which is the address
+// that carries a custom row for Turn into a drill.
+function plannerEntry(): string {
+  return params.get('at') === 'existing' ? `/planner?sessionId=${PLANNER_SESSION_ID}` : '/planner'
+}
+
 const ENTRY: Record<string, string> = {
   sessions: '/sessions',
+  planner: plannerEntry(),
+  // The week plan editor is a ROUTE rather than a bare screen, so Save and
+  // draw it can leave for the Drill Maker and Back can come back to it.
+  weekplan: '/templates',
   adminusers: '/admin/users',
   adminteams: '/admin/teams',
   adminvenues: '/admin/venues',

@@ -38,6 +38,7 @@ turned out to be finished or unnecessary.
 | COACH-3, the suggested setup | **Merged.** #203 (the generator) and #204 (the screen). |
 | COACH-4, the setup preserved across attendance changes | **Merged.** #206. |
 | COACH-10, the shared authoring seam | **Merged.** #207. |
+| COACH-11, create and draw a drill from either surface | **Built**, this pull request. No migration. |
 | Migration numbering | `0052_atomic_team_order.sql` is the highest applied and stamped `20260904174142` / `atomic_team_order` on 4 September 2026, which is the hosted head; `0051_team_sort_order.sql` is the row before it at `20260902150212` / `team_sort_order`. `0053_venue_layouts.sql` (COACH-5, M2) is registered against that head, read live on 7 September 2026, and is reviewed and not yet applied. |
 
 **The two pull requests that had to stay separate from this work have both
@@ -675,6 +676,15 @@ seam.
 **PR boundary.** One PR.
 
 ### COACH-11: create and draw a drill from either surface
+
+**Status.** Built, this pull request. The hazard below was decided once, in
+`src/lib/authoringReturn.ts` and `src/lib/planDrillAuthoring.ts`, and both
+hosts reach it through `usePlanDrillAuthoring`: the host's whole draft is
+stashed one shot in the tab's session storage before the navigation, bound to
+the signed in user and the host, and the host that mounts on the way back
+takes it exactly once. The Drill Maker's Back honours an allowlisted return
+address on every state it has. The modal round trip was not substantial
+enough for a second pull request.
 
 **Outcome.** A coach writing a plan, whether a programme week or Tuesday's
 session, can create the drill they have in mind, draw it, and carry on.

@@ -94,3 +94,33 @@ describe('what the session age group control offers', () => {
     expect(DEFAULT_AGE_GROUPS).toEqual(['U6s', 'U7s', 'U8s', 'U9s', 'U10s', 'U11s', 'U12s'])
   })
 })
+
+// COACH-11 + COACH-5, Codex's third finding. The two rules that make the
+// race possible, stated together so the pair cannot drift apart: the
+// control OFFERS the fallback labels while the club read is in flight, and
+// defaultAgeGroup REPLACES a label the arriving list does not carry. Each
+// is correct alone. Together they mean a coach who chooses before the read
+// lands loses that choice, which is why Planner.tsx marks the field settled
+// on a manual choice rather than only when the seed runs.
+describe('the loading window a coach can choose inside', () => {
+  it('offers the fallback labels before the club list has answered', () => {
+    const offered = ageGroupOptions(undefined, '')
+    expect(offered.length).toBeGreaterThan(0)
+    // Whatever the fallback list is, it is a real choice a coach can make.
+    expect(offered).toContain(LEGACY_DEFAULT_AGE_GROUP)
+  })
+
+  it('would replace a choice the arriving club list does not carry', () => {
+    // The reason the guard is needed, pinned as the behaviour it guards
+    // against rather than as prose. A coach picked U8s from the fallback
+    // list; the club's configured list turns out not to carry it.
+    const chosen = LEGACY_DEFAULT_AGE_GROUP
+    const clubList = ['Under 9', 'Under 10']
+    expect(clubList).not.toContain(chosen)
+    expect(defaultAgeGroup(clubList, chosen)).toBe('Under 9')
+    // And keeps it when the list does carry it, which is why the seed is
+    // safe on an untouched draft.
+    expect(defaultAgeGroup([chosen, 'Under 9'], chosen)).toBe(chosen)
+  })
+})
+

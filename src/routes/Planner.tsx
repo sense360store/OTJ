@@ -37,6 +37,8 @@ import {
   SourceLink,
 } from '../components/ui'
 import { ActivityListEditor, type SessionRowContent } from '../components/ActivityListEditor'
+import { useAuthoringReturn, usePlanDrillAuthoring } from '../components/PlanDrillAuthoring'
+import { plannerDraft, readPlannerDraft, type PlannerDraft } from '../lib/planDrillAuthoring'
 import {
   createPlannerActions,
   logSessionWriteError,
@@ -607,10 +609,18 @@ function PlannerEditor({
   const mediaById = useMediaMap()
   const actTitle = useActivityTitle()
 
+  // COACH-11. A draft that went to the Drill Maker and came back is adopted
+  // as the initial state, in place of the stored row or a blank one. It is
+  // taken once, for this user and this session (a new session's stash is
+  // named null, and so is a new session), and the token leaves the address.
+  const returned = useAuthoringReturn<PlannerDraft>('planner')
+  const restored = returned && returned.id === (existing?.id ?? null) ? readPlannerDraft(returned.draft) : null
   const [session, setSession] = useState<Session>(() =>
-    existing
-      ? (JSON.parse(JSON.stringify(existing)) as Session)
-      : blankSession(newDefaults?.coachId ?? ''),
+    restored
+      ? restored.session
+      : existing
+        ? (JSON.parse(JSON.stringify(existing)) as Session)
+        : blankSession(newDefaults?.coachId ?? ''),
   )
 
   // EVERY new session starts covering the whole club, seeded once the team
@@ -645,7 +655,14 @@ function PlannerEditor({
   // early leaves a session they can correct in one tap on the screen they
   // are already on. Blocking Save over a sub second read, or over a
   // failed one, would cost more than it saves.
-  const coverageSeeded = useRef(!!existing)
+  // A restored draft carries WHETHER THIS FIELD WAS SETTLED when the coach
+  // left, and that is what suppresses the seed rather than the draft's mere
+  // existence. A coverage they cleared before drawing stays cleared; a
+  // coach who left while the team read was still in flight, or after a
+  // failed read, comes back to a draft that still seeds when it answers.
+  // Reading every restored draft as settled left that session covering
+  // nobody, with no later repair and nothing on screen saying so.
+  const coverageSeeded = useRef(!!existing || restored?.seeded.coverage === true)
   useEffect(() => {
     if (coverageSeeded.current || teams.length === 0) return
     coverageSeeded.current = true
@@ -655,7 +672,17 @@ function PlannerEditor({
   // session starts on that list rather than on the one label it always
   // started on (COACH-5). Once, and only where the coach has not already
   // chosen a label the list carries; an existing session never seeds.
-  const ageSeeded = useRef(!!existing)
+  //
+  // A restored draft is excluded for the reason coverage excludes it, and
+  // the case is reachable rather than theoretical: a coach drafting a NEW
+  // session carries no `existing`, so on the way back from the Drill Maker
+  // this would seed into a draft they had already filled in. Where the
+  // label they chose is not one the club's list carries, a retired
+  // spelling or the legacy default, defaultAgeGroup answers with the
+  // list's first entry, so the trip to draw would quietly change the age
+  // group they had set. The whole promise of that trip is that the draft
+  // comes back as it left.
+  const ageSeeded = useRef(!!existing || restored?.seeded.age === true)
   useEffect(() => {
     if (ageSeeded.current || !clubAgeGroups || clubAgeGroups.length === 0) return
     ageSeeded.current = true
@@ -688,7 +715,18 @@ function PlannerEditor({
   const readOnly = !!existing && existing.coachId !== user?.id && !caps.has('sessions.manage')
   const owner = existing ? memberById[existing.coachId] : undefined
 
-  const setField = (k: SessionFieldKey, v: string) => setSession((s) => ({ ...s, [k]: v }))
+  // A coach choosing the age group settles it, so the seed below never runs
+  // over their choice. Codex, third finding, and the race is narrow but real:
+  // while the club's list is still loading the control deliberately offers
+  // the fallback labels, so a coach can choose one BEFORE the read lands. A
+  // ref that only records whether seeding ran cannot tell that state from an
+  // untouched draft, so the arriving list replaced their choice with its
+  // first entry whenever the list did not carry the label they picked. The
+  // ref means "this field is settled", and a manual choice settles it.
+  const setField = (k: SessionFieldKey, v: string) => {
+    if (k === 'ageGroup') ageSeeded.current = true
+    setSession((s) => ({ ...s, [k]: v }))
+  }
   const setIntentions = (v: string[]) => setSession((s) => ({ ...s, intentions: v }))
   const setVenue = (v: string | null) => setSession((s) => ({ ...s, venueId: v }))
   const toggleTeam = (teamId: string) =>
@@ -739,6 +777,22 @@ function PlannerEditor({
       return { ...s, activities: a }
     })
   const addActivities = (items: Activity[]) => setSession((s) => ({ ...s, activities: [...s.activities, ...items] }))
+
+  // COACH-11. New drill and Turn into a drill, through the one shared hook
+  // the week plan editor calls too. The planner hands it the draft as it
+  // stands and takes back the plan with the created drill in it; the trip
+  // to the Drill Maker keeps the whole draft, restored above on return.
+  const authoring = usePlanDrillAuthoring<PlannerDraft>({
+    host: 'planner',
+    id: existing?.id ?? null,
+    returnPath: existing ? `/planner?sessionId=${existing.id}` : '/planner',
+    activities: session.activities,
+    onActivities: (activities) => setSession((s) => ({ ...s, activities })),
+    // The draft is the session AND what the two reads had settled by the
+    // time the coach left, so the way back can resume a seed that never ran.
+    draftWith: (activities) =>
+      plannerDraft({ ...session, activities }, { coverage: coverageSeeded.current, age: ageSeeded.current }),
+  })
 
   // One dated row's resolved content for the shared editor. A drillId whose
   // drill was deleted resolves to null; the row stays usable with a removed
@@ -963,7 +1017,10 @@ function PlannerEditor({
             onRemove={removeAct}
             onAddLibrary={() => setAddOpen(true)}
             onAddCustom={() => addActivities([{ phase: 'Skill', title: 'Custom activity', duration: 10 }])}
+            onNewDrill={readOnly ? undefined : authoring.onNewDrill}
+            onTurnIntoDrill={readOnly ? undefined : authoring.onTurnIntoDrill}
           />
+          {authoring.note}
         </div>
 
         <div className="planner-side">
@@ -1054,6 +1111,7 @@ function PlannerEditor({
       {deleteOpen && existing && (
         <DeleteSessionModal s={existing} onClose={() => setDeleteOpen(false)} onDeleted={() => nav('sessions')} />
       )}
+      {authoring.modal}
     </div>
   )
 }

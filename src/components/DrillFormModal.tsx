@@ -5,10 +5,28 @@
 // against the fixed age taxonomy. The media picker lists the club's media
 // with thumbnails and allows none, and members who can create media can add
 // a new item inline without leaving the form.
+//
+// COACH-11 ADDS A PLAN MODE, and nothing else changes for the Library. A
+// plan (the dated session planner or the week plan editor) opens this same
+// form to create the drill it has in mind: the SAME insert, the same
+// ownership (created_by is the coach), the same RLS and the same sharing
+// default, so a drill born in a plan is a library drill like any other.
+// What differs is the form's shape and what happens after the write:
+//   - the fields a plan needs first are in front (title, what it works on,
+//     the phase and minutes the activity will take) and the rest sit under
+//     a disclosure, so a coach mid plan is not handed twenty fields;
+//   - the footer offers Add to plan and Save and draw it, and the created
+//     drill is handed back to the plan through onCreated rather than the
+//     form simply closing. Where the plan puts it, and the trip to the
+//     Drill Maker, are the plan's business (src/lib/planDrillAuthoring.ts).
+// Phase is an activity fact and never a drill column, which is why the
+// form learns it only in this mode and never writes it to the drill.
 import { useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Icon } from './icons'
 import { RightsControl, RightsNewNote } from './RightsControl'
 import { Chip, ListInput, Loading, MediaThumb, MEDIA_META, Modal, UploadProgress } from './ui'
+import { Button, Note, SelectField, TextAreaField, TextField } from './primitives'
 import {
   mediaTypeForFile,
   oversizeMessage,
@@ -19,9 +37,31 @@ import {
   useUploadMedia,
 } from '../lib/queries'
 import type { DrillInput, UploadInput } from '../lib/queries'
-import { AGES, CORNERS, LEVELS, youtubeId } from '../lib/data'
-import type { CornerKey, Drill, Level } from '../lib/data'
+import { AGES, CORNERS, LEVELS, PHASES, youtubeId } from '../lib/data'
+import type { CornerKey, Drill, Level, Phase } from '../lib/data'
 import { FA_FORMATS, FA_PLAYER_SKILLS, FA_THEMES, withExistingValues } from '../lib/fa'
+import type { PlanSlot } from '../lib/planDrillAuthoring'
+
+// COACH-11. What a plan hands the form and what it takes back.
+export type DrillCreatedIntent = 'add' | 'draw'
+
+export interface DrillFormPlanMode {
+  // Starting values: a custom row's, or the add bar's default.
+  preset: { title: string } & PlanSlot
+  // True when the created drill replaces a custom activity in place rather
+  // than joining the end of the plan; only the wording changes.
+  replacing: boolean
+  // Whether this member can actually REACH the Drill Maker. Creating a drill
+  // needs drills.create; the /drill/:id/diagram route is gated separately in
+  // App.tsx, and a member can hold the first without the second. Offering
+  // Save and draw it to them inserted the drill, stashed the draft and then
+  // met the route guard, which sent them Home with the plan's stash unread.
+  // Add to plan is unaffected, so the only thing withheld is the trip.
+  canDraw: boolean
+  // Runs once the insert has landed, with the drill the database returned
+  // and the slot chosen on the form. The plan closes the form itself.
+  onCreated: (drill: Drill, slot: PlanSlot, intent: DrillCreatedIntent) => void
+}
 
 // The club's media with thumbnails. One tile per item plus a none tile; the
 // selection sets mediaId or clears it. Members holding media.create also get
@@ -273,9 +313,9 @@ function InlineMediaCreator({
   )
 }
 
-function fromDrill(drill?: Drill): DrillInput {
+function fromDrill(drill?: Drill, preset?: { title: string; duration: number }): DrillInput {
   return {
-    title: drill?.title ?? '',
+    title: drill?.title ?? preset?.title ?? '',
     summary: drill?.summary ?? '',
     // Editing keeps the drill's real classification: an unclassified drill
     // (an FA import) opens with no corner selected and no skill, never a
@@ -284,7 +324,7 @@ function fromDrill(drill?: Drill): DrillInput {
     skill: drill?.skill ?? '',
     level: drill?.level ?? 'Foundation',
     ages: drill?.ages ?? [],
-    duration: drill?.duration || 10,
+    duration: drill?.duration || preset?.duration || 10,
     players: drill?.players ?? '',
     area: drill?.area ?? '',
     equipment: drill?.equipment ?? [],
@@ -300,14 +340,27 @@ function fromDrill(drill?: Drill): DrillInput {
   }
 }
 
-export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () => void }) {
+export function DrillFormModal({
+  drill,
+  onClose,
+  plan,
+}: {
+  drill?: Drill
+  onClose: () => void
+  // COACH-11. Present when a plan opened the form; absent from the Library.
+  plan?: DrillFormPlanMode
+}) {
   const insert = useInsertDrill()
   const update = useUpdateDrill()
   // The inline media creator's mutation lives at form level so saving the
   // drill waits for an in flight upload; otherwise the drill would save
   // without the media that was still uploading.
   const upload = useUploadMedia()
-  const [form, setForm] = useState<DrillInput>(() => fromDrill(drill))
+  const [form, setForm] = useState<DrillInput>(() => fromDrill(drill, plan?.preset))
+  // Plan mode only: the phase the activity takes. Never written to the drill.
+  const [phase, setPhase] = useState<Phase>(plan?.preset.phase ?? 'Skill')
+  // Plan mode only: which footer action is in flight, for its label.
+  const [intent, setIntent] = useState<DrillCreatedIntent | null>(null)
   const [error, setError] = useState<string | null>(null)
   const pending = insert.isPending || update.isPending
   const set = <K extends keyof DrillInput>(k: K, v: DrillInput[K]) => setForm((f) => ({ ...f, [k]: v }))
@@ -327,37 +380,129 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
     else insert.mutate(input, opts)
   }
 
+  // Plan mode: the same insert, then the drill goes back to the plan with
+  // the slot chosen here. The form's duration IS the activity's minutes,
+  // one field rather than two numbers that could disagree.
+  const submitToPlan = (what: DrillCreatedIntent) => {
+    if (!plan) return
+    setError(null)
+    setIntent(what)
+    const input = { ...form, title: form.title.trim() }
+    insert.mutate(input, {
+      onSuccess: (created) => plan.onCreated(created, { phase, duration: form.duration }, what),
+      onError: (e: Error) => {
+        setIntent(null)
+        setError(e.message)
+      },
+    })
+  }
+
+  const canSubmit = !!form.title.trim() && !pending && !upload.isPending
+  const errorNote = error ? (
+    <Note tone="danger" role="alert" className="drill-form-error">
+      {error}
+    </Note>
+  ) : null
+
   return (
     <Modal
-      title={drill ? 'Edit drill' : 'Add drill'}
-      sub={drill ? drill.title : 'Add a drill to the club library.'}
+      title={plan ? 'New drill' : drill ? 'Edit drill' : 'Add drill'}
+      sub={
+        plan
+          ? plan.replacing
+            ? 'Takes the place of the custom activity, and joins the club library.'
+            : 'Goes into this plan, and into the club library.'
+          : drill
+            ? drill.title
+            : 'Add a drill to the club library.'
+      }
       onClose={onClose}
+      // Plan mode freezes every dismissal route while the insert is in
+      // flight. A form dismissed mid write would still create the drill
+      // (the write is already out) but the settled callback would find no
+      // form to hand it to, and the plan would never receive it: a library
+      // drill nobody asked for and a plan without it. The Library form's
+      // own dismissal is unchanged.
+      dismissible={plan ? !pending : true}
       wide
       footer={
-        <>
-          <button className="btn btn-ghost" onClick={onClose} disabled={pending}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" onClick={submit} disabled={!form.title.trim() || pending || upload.isPending}>
-            <Icon.check />
-            {pending ? 'Saving…' : drill ? 'Save changes' : 'Add drill'}
-          </button>
-        </>
+        plan ? (
+          <>
+            <Button variant="ghost" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            {plan.canDraw && (
+              <Button variant="ghost" icon={Icon.edit} onClick={() => submitToPlan('draw')} disabled={!canSubmit}>
+                {pending && intent === 'draw' ? 'Saving…' : 'Save and draw it'}
+              </Button>
+            )}
+            <Button variant="primary" icon={Icon.check} onClick={() => submitToPlan('add')} disabled={!canSubmit}>
+              {pending && intent === 'add' ? 'Saving…' : 'Add to plan'}
+            </Button>
+          </>
+        ) : (
+          <>
+            <button className="btn btn-ghost" onClick={onClose} disabled={pending}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={submit} disabled={!canSubmit}>
+              <Icon.check />
+              {pending ? 'Saving…' : drill ? 'Save changes' : 'Add drill'}
+            </button>
+          </>
+        )
       }
     >
-      <div className="field">
-        <label>Title</label>
-        <input value={form.title} placeholder="Drill name" onChange={(e) => set('title', e.target.value)} autoFocus />
-      </div>
-      <div className="field">
-        <label>Summary</label>
-        <textarea
-          value={form.summary}
-          rows={2}
-          placeholder="What the drill is and what it works on"
-          onChange={(e) => set('summary', e.target.value)}
-        />
-      </div>
+      {plan ? (
+        <>
+          <TextField label="Title" value={form.title} placeholder="Drill name" onChange={(e) => set('title', e.target.value)} autoFocus />
+          <TextAreaField
+            label="What it works on"
+            value={form.summary}
+            rows={2}
+            placeholder="One or two lines, enough to pick it from the library later"
+            onChange={(e) => set('summary', e.target.value)}
+          />
+          <div className="drill-form-slot">
+            <SelectField label="Phase" value={phase} onChange={(e) => setPhase(e.target.value as Phase)}>
+              {PHASES.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </SelectField>
+            <TextField
+              label="Minutes"
+              type="number"
+              min={1}
+              max={90}
+              value={form.duration}
+              onChange={(e) => set('duration', parseInt(e.target.value) || 0)}
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="field">
+            <label>Title</label>
+            <input value={form.title} placeholder="Drill name" onChange={(e) => set('title', e.target.value)} autoFocus />
+          </div>
+          <div className="field">
+            <label>Summary</label>
+            <textarea
+              value={form.summary}
+              rows={2}
+              placeholder="What the drill is and what it works on"
+              onChange={(e) => set('summary', e.target.value)}
+            />
+          </div>
+        </>
+      )}
+      {/* Plan mode folds the rest of the drill under one disclosure. It is a
+          native details element: keyboard operable, announced as expanded
+          or collapsed, and nothing inside it is required. */}
+      {plan && errorNote}
+      <MoreDetails open={!plan}>
       <div className="field">
         <label>Corner</label>
         {/* The chips toggle, so a corner can be cleared as well as set and an
@@ -433,16 +578,18 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
         </div>
       </div>
       <div className="row" style={{ gap: 10 }}>
-        <div className="field" style={{ width: 110 }}>
-          <label>Duration (min)</label>
-          <input
-            type="number"
-            min={1}
-            max={90}
-            value={form.duration}
-            onChange={(e) => set('duration', parseInt(e.target.value) || 0)}
-          />
-        </div>
+        {!plan && (
+          <div className="field" style={{ width: 110 }}>
+            <label>Duration (min)</label>
+            <input
+              type="number"
+              min={1}
+              max={90}
+              value={form.duration}
+              onChange={(e) => set('duration', parseInt(e.target.value) || 0)}
+            />
+          </div>
+        )}
         <div className="field" style={{ flex: 1 }}>
           <label>Players</label>
           <input value={form.players} placeholder="e.g. 3–6 per group" onChange={(e) => set('players', e.target.value)} />
@@ -522,11 +669,21 @@ export function DrillFormModal({ drill, onClose }: { drill?: Drill; onClose: () 
         <label>Media</label>
         <MediaPicker value={form.mediaId} onChange={(id) => set('mediaId', id)} upload={upload} />
       </div>
-      {error && (
-        <p className="muted" style={{ color: 'var(--danger)', fontSize: 13.5, marginTop: 10 }}>
-          {error}
-        </p>
-      )}
+      </MoreDetails>
+      {!plan && errorNote}
     </Modal>
+  )
+}
+
+// The disclosure plan mode folds the long tail of fields under. Outside
+// plan mode it is transparent: the Library form renders every field as it
+// always has, with no element around them.
+function MoreDetails({ open, children }: { open: boolean; children: ReactNode }) {
+  if (open) return <>{children}</>
+  return (
+    <details className="form-more">
+      <summary>More details</summary>
+      <div className="form-more-body">{children}</div>
+    </details>
   )
 }

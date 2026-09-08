@@ -744,6 +744,18 @@ summary:focus-visible,
 .act-edit > .row,
 .act-edit > .icon-btn,
 .act-edit > .act-x { flex: 0 0 auto; }
+/* COACH-11, found by measuring at 360: the planner's grid column took its
+   content's minimum width, so a session with one drill row was 574px wide
+   on a 360px phone and the whole page scrolled sideways, add bar included.
+   The column shrinks like any block now, and under the phone breakpoint the
+   dated row wraps the way the week plan row already did: the title on the
+   first line, the phase, minutes and remove on the second. */
+.planner > * { min-width: 0; }
+@media (max-width: 900px) {
+  .act-card { flex-wrap: wrap; row-gap: var(--space-8); }
+  .act-card > .ac-toggle, .act-card > .ac-body { flex: 1 1 200px; min-width: 150px; }
+  .act-card > .act-phase, .act-card > .act-dur-field, .act-card > .act-x { flex: 0 0 auto; }
+}
 
 /* Expandable drill card: the body is a button that toggles a detail panel
    beneath, so coaches can inspect a drill without leaving the planner. */
@@ -771,6 +783,43 @@ summary:focus-visible,
   transition: border-color var(--dur-fast), color var(--dur-fast), background var(--dur-fast); }
 .add-slot:hover { border-color: var(--navy); color: var(--royal); background: color-mix(in srgb, var(--navy) 4%, transparent); }
 .add-slot svg { width: 16px; height: 16px; }
+/* COACH-11. The add bar holds three actions, and three do not fit one phone
+   row: it wraps, and a wrapped action takes the full width rather than a
+   clipped sliver. Every action is a real 44px control. */
+.add-bar { display: flex; flex-wrap: wrap; gap: var(--space-8); margin-top: var(--space-8); }
+.add-bar .add-slot { flex: 1 1 160px; margin-bottom: 0; min-height: var(--control-h); }
+.act-list-plan { display: flex; flex-direction: column; gap: var(--space-8); }
+/* The row's own controls, on the token scale: the phase select and the
+   minutes field share the small control height and the row's border. */
+.act-phase, .act-dur-input { height: var(--control-h-sm); border-radius: var(--radius-xs); border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); font-family: inherit; font-weight: 700; font-size: var(--text-sm); }
+.act-phase { padding: 0 var(--space-4); }
+.act-dur-input { width: 52px; text-align: center; font-weight: 800; }
+.act-dur-field { display: flex; align-items: center; gap: var(--space-4); }
+.act-dur-unit { font-size: var(--text-xs); font-weight: 700; color: var(--slate); }
+.act-phase:focus-visible, .act-dur-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-color: var(--focus); }
+.act-phase:disabled, .act-dur-input:disabled { opacity: .5; cursor: not-allowed; }
+.ac-phase { display: inline-flex; align-items: center; gap: var(--space-4); }
+.act-panel-none { font-size: var(--text-sm); }
+/* Turn into a drill sits under a custom row's title, pulled flush with the
+   text so the quiet button reads as part of the row rather than a card. */
+.act-turn { margin-top: var(--space-4); margin-left: calc(-1 * var(--space-12)); }
+/* The drill form in plan mode (COACH-11): the phase and minutes the
+   activity takes sit side by side, the long tail of drill fields folds under
+   a native disclosure, and a refused write is a Note above the fold. */
+.drill-form-slot { display: grid; grid-template-columns: 1fr 120px; gap: var(--space-12); }
+.drill-form-error { margin-bottom: var(--space-12); }
+.form-more { border-top: 1px solid var(--line); margin-top: var(--space-4); }
+.form-more > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: var(--space-8);
+  min-height: var(--control-h); font-weight: 700; font-size: var(--text-sm); color: var(--slate); border-radius: var(--radius-sm); }
+.form-more > summary::-webkit-details-marker { display: none; }
+.form-more > summary::before { content: ""; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg); transition: transform var(--dur-fast); margin-left: var(--space-4); }
+.form-more[open] > summary::before { transform: rotate(45deg); }
+.form-more > summary:hover { color: var(--ink); }
+.form-more > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.form-more-body { padding-top: var(--space-12); }
+.plan-authoring-note { margin-top: var(--space-12); }
 
 .planner-side { position: sticky; top: 78px; display: flex; flex-direction: column; gap: var(--space-16); }
 .side-card { padding: var(--space-16); }
