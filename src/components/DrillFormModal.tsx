@@ -51,6 +51,13 @@ export interface DrillFormPlanMode {
   // True when the created drill replaces a custom activity in place rather
   // than joining the end of the plan; only the wording changes.
   replacing: boolean
+  // Whether this member can actually REACH the Drill Maker. Creating a drill
+  // needs drills.create; the /drill/:id/diagram route is gated separately in
+  // App.tsx, and a member can hold the first without the second. Offering
+  // Save and draw it to them inserted the drill, stashed the draft and then
+  // met the route guard, which sent them Home with the plan's stash unread.
+  // Add to plan is unaffected, so the only thing withheld is the trip.
+  canDraw: boolean
   // Runs once the insert has landed, with the drill the database returned
   // and the slot chosen on the form. The plan closes the form itself.
   onCreated: (drill: Drill, slot: PlanSlot, intent: DrillCreatedIntent) => void
@@ -424,9 +431,11 @@ export function DrillFormModal({
             <Button variant="ghost" onClick={onClose} disabled={pending}>
               Cancel
             </Button>
-            <Button variant="ghost" icon={Icon.edit} onClick={() => submitToPlan('draw')} disabled={!canSubmit}>
-              {pending && intent === 'draw' ? 'Saving…' : 'Save and draw it'}
-            </Button>
+            {plan.canDraw && (
+              <Button variant="ghost" icon={Icon.edit} onClick={() => submitToPlan('draw')} disabled={!canSubmit}>
+                {pending && intent === 'draw' ? 'Saving…' : 'Save and draw it'}
+              </Button>
+            )}
             <Button variant="primary" icon={Icon.check} onClick={() => submitToPlan('add')} disabled={!canSubmit}>
               {pending && intent === 'add' ? 'Saving…' : 'Add to plan'}
             </Button>

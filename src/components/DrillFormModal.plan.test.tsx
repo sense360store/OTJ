@@ -27,13 +27,14 @@ vi.mock('./RightsControl', () => ({ RightsControl: () => null, RightsNewNote: ()
 
 const noop = () => {}
 
-function planForm(over: { title?: string; replacing?: boolean } = {}): string {
+function planForm(over: { title?: string; replacing?: boolean; canDraw?: boolean } = {}): string {
   return renderToStaticMarkup(
     <DrillFormModal
       onClose={noop}
       plan={{
         preset: { title: over.title ?? '', phase: 'Game', duration: 12 },
         replacing: over.replacing ?? false,
+        canDraw: over.canDraw ?? true,
         onCreated: noop,
       }}
     />,
@@ -67,6 +68,19 @@ describe('plan mode', () => {
     expect(html).toMatch(/<input[^>]*value="Arrival games"/)
     expect(html).toMatch(/<option value="Game" selected="">Game<\/option>/)
     expect(html).toMatch(/<input[^>]*type="number"[^>]*value="12"/)
+  })
+
+  it('withholds Save and draw it from a member who cannot reach the Drill Maker', () => {
+    // Codex, second round. Creating a drill needs drills.create; the Drill
+    // Maker ROUTE is gated separately in App.tsx, and the admin role grid
+    // can grant the first without the second (templates.manage opens the
+    // week plan editor from the programme page). Pressing it inserted the
+    // drill, stashed the draft, and then met the route guard, which sent
+    // them Home with the stash unread. Add to plan is untouched, so what
+    // is withheld is the trip and nothing else.
+    const html = planForm({ title: 'Rondo', canDraw: false })
+    expect(html).not.toContain('Save and draw it')
+    expect(html).toContain('Add to plan')
   })
 
   it('offers Add to plan and Save and draw it, disabled until there is a title', () => {

@@ -34,11 +34,14 @@
 // file so the modal and this hook do not import each other), which
 // reopens the modal on the draft.
 //
-// PERMISSIONS ARE UNCHANGED. drills.create is the one capability, the
-// same one the Library's Add drill needs, and the drills insert policy
-// enforces it whatever the screen says. No adaptation semantics: the
-// created drill is a listed, reusable library drill, and nothing here
-// knows the word variant.
+// PERMISSIONS ARE UNCHANGED, and this file GRANTS none. drills.create is
+// what the two affordances need, the same one the Library's Add drill
+// needs, and the drills insert policy enforces it whatever the screen
+// says. Save and draw it additionally needs the capability the Drill
+// Maker ROUTE is gated on, because it navigates there; that is read and
+// WITHHELD rather than widened (DRILL_MAKER_ROUTE_CAP below). No
+// adaptation semantics: the created drill is a listed, reusable library
+// drill, and nothing here knows the word variant.
 // =====================================================================
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -64,6 +67,19 @@ import {
 import type { Activity } from '../lib/data'
 
 export const DRILL_CREATE_CAP = 'drills.create'
+
+// The capability the Drill Maker ROUTE is gated on in App.tsx. It is not the
+// same question as "may this member create a drill", and the two are held
+// separately: the week plan editor opens under templates.manage, so a member
+// can hold drills.create and templates.manage without sessions.create, which
+// the admin role grid can grant. Such a member was offered Save and draw it,
+// and pressing it inserted the drill, stashed the draft and then met the
+// route guard, which sent them Home with the plan's stash unread. Withheld
+// rather than widened: this file decides what to OFFER, and moving the route
+// gate would be a permissions change, which the guard's own comment argues
+// against (it excludes parents deliberately). Add to plan is unaffected.
+// planDrillAuthoring.invariant.test.ts pins these two in step with App.tsx.
+export const DRILL_MAKER_ROUTE_CAP = 'sessions.create'
 
 export interface PlanDrillAuthoringArgs<D> {
   host: AuthoringHost
@@ -107,6 +123,7 @@ export function usePlanDrillAuthoring<D>(args: PlanDrillAuthoringArgs<D>): PlanD
   })
 
   const canCreate = caps.has(DRILL_CREATE_CAP)
+  const canDraw = caps.has(DRILL_MAKER_ROUTE_CAP)
 
   const open = (target: CreatedDrillTarget) => {
     setNote(null)
@@ -142,7 +159,7 @@ export function usePlanDrillAuthoring<D>(args: PlanDrillAuthoringArgs<D>): PlanD
     modal: request ? (
       <DrillFormModal
         onClose={() => setRequest(null)}
-        plan={{ preset: quickDrillPreset(from), replacing: request.kind === 'replace', onCreated }}
+        plan={{ preset: quickDrillPreset(from), replacing: request.kind === 'replace', canDraw, onCreated }}
       />
     ) : null,
     note: note ? (

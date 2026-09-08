@@ -155,6 +155,7 @@ function planEditor(s: SessionSpies, over: { activities?: Activity[] } = {}) {
       activities={over.activities ?? PLAN}
       variant={{
         kind: 'plan',
+        busy: false,
         meta: (a) => ({ title: a.title ?? 'Untitled', skill: null }),
         onMove: s.onMove,
       }}
@@ -444,7 +445,7 @@ function withAuthoring(kind: 'session' | 'plan', s: AuthoringSpies, over: { read
     onTurnIntoDrill: s.onTurnIntoDrill,
   }
   if (kind === 'plan') {
-    return <ActivityListEditor {...shared} variant={{ kind: 'plan', meta: (a) => ({ title: a.title ?? 'Rondo', skill: null }), onMove: s.onMove }} />
+    return <ActivityListEditor {...shared} variant={{ kind: 'plan', busy: over.busy ?? false, meta: (a) => ({ title: a.title ?? 'Rondo', skill: null }), onMove: s.onMove }} />
   }
   return (
     <ActivityListEditor
@@ -582,5 +583,25 @@ describe('COACH-11: creating a drill from either surface', () => {
     const html = renderToStaticMarkup(withAuthoring('session', authoringSpies()))
     expect(html).toContain('aria-label="Phase"')
     expect(html).toContain('aria-label="Minutes"')
+  })
+  it('freezes both authoring affordances on BOTH hosts while a save is in flight', () => {
+    // Codex, second round. The week plan variant hard coded busy to false,
+    // which was harmless while every action in its bar was a local draft
+    // edit and became a defect the moment COACH-11 put a WRITE there. Both
+    // orderings lose: a template save that lands first closes the host and
+    // unmounts the drill form mid insert, and a drill insert that lands
+    // first writes into a draft whose payload the submit already captured.
+    // Either creates a library drill the saved week never carries.
+    for (const kind of ['session', 'plan'] as const) {
+      const html = renderToStaticMarkup(withAuthoring(kind, authoringSpies(), { busy: true }))
+      // Every add-bar action is disabled, New drill included.
+      for (const tag of html.match(/<button type="button" class="add-slot"[^>]*>/g) ?? []) {
+        expect(tag, kind).toContain('disabled')
+      }
+      // And so is Turn into a drill on the custom row.
+      const turn = html.match(/<button type="button" class="btn btn-quiet btn-sm act-turn"[^>]*>/g) ?? []
+      expect(turn.length, kind).toBeGreaterThan(0)
+      for (const tag of turn) expect(tag, kind).toContain('disabled')
+    }
   })
 })

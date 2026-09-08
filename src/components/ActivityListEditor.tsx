@@ -27,10 +27,11 @@
 //   plan      the week-plan editor. Dense act-edit rows reordered with
 //             the Move up and Move down buttons, no stand-down ever
 //             (`skipped` is session local and reusable content must not
-//             carry it), and no busy freeze, which is that host's
-//             deliberate current behaviour: its whole form submits
-//             through the modal footer and no activity control froze
-//             before this seam existed, so none freezes now.
+//             carry it), and the same busy freeze the dated variant has.
+//             It had none until COACH-11: its whole form submits through
+//             the modal footer and no activity control froze before this
+//             seam existed. That stopped being safe the moment one of
+//             those controls started a WRITE of its own; see the variant.
 //
 // COACH-11 ADDS TWO AFFORDANCES AND NO MEANING. New drill in the add bar
 // and Turn into a drill on a custom row are buttons that reach a host
@@ -415,6 +416,7 @@ export function TemplateActivityRow({
   onRemove,
   activities,
   onRole,
+  busy = false,
   onTurnIntoDrill,
 }: {
   activity: Activity
@@ -430,6 +432,11 @@ export function TemplateActivityRow({
   // among the stations running, which one activity cannot know.
   activities: readonly Activity[]
   onRole: (role: ActivityRole) => void
+  // Frozen while the host's save is in flight, as the dated row is. This
+  // row's other controls are local draft edits the closing modal discards
+  // anyway; Turn into a drill starts a write, which is what makes it
+  // matter. See the plan variant's own note.
+  busy?: boolean
   // COACH-11. See ActivityCardView: offered on a custom row when the host
   // supplies it, never on a drill row.
   onTurnIntoDrill?: () => void
@@ -441,7 +448,7 @@ export function TemplateActivityRow({
       <div className="ac-body">
         <h4>{title}</h4>
         <div className="ac-sub">{skill && <span>{skill}</span>}</div>
-        {onTurnIntoDrill && !activity.drillId && <TurnIntoDrillButton onClick={onTurnIntoDrill} />}
+        {onTurnIntoDrill && !activity.drillId && <TurnIntoDrillButton disabled={busy} onClick={onTurnIntoDrill} />}
       </div>
       <PhaseSelect value={activity.phase} onChange={onPhase} />
       <DurationField value={activity.duration} onChange={onDuration} />
@@ -474,10 +481,12 @@ export function TemplateActivityRow({
 
 // ---- The add bar ------------------------------------------------------
 
-// The "add an activity" buttons under the list. On the dated planner
-// adding edits the draft, so all of them freeze while a write is in
-// flight; the week-plan editor passes no busy state, which is its current
-// behaviour. New drill (COACH-11) is offered only when the host supplies
+// The "add an activity" buttons under the list. Adding edits the draft, so
+// all of them freeze while a write is in flight, on BOTH hosts. The week
+// plan editor hard coded that state to false until COACH-11, which was
+// harmless while every action here was a local edit and became a defect
+// the moment one of them started a write of its own.
+// New drill (COACH-11) is offered only when the host supplies
 // the callback, because it needs drills.create and the host is what knows.
 // The bar wraps: three actions do not fit one phone row, and a wrapped
 // button is a full width one rather than a clipped one.
@@ -559,6 +568,17 @@ export type ActivityListVariant =
     }
   | {
       kind: 'plan'
+      // Frozen while the host's own save is in flight, exactly as the dated
+      // variant is. This was hard coded false, which was harmless while
+      // every action in this variant was a local draft edit: the modal
+      // closes on a successful save, so a draft edited during one went
+      // nowhere anyway. COACH-11 put an action that STARTS A WRITE in the
+      // same bar, and then both orderings lose. A template save that
+      // resolves first closes the host and unmounts the drill form mid
+      // insert; a drill insert that resolves first writes into a draft
+      // whose payload the template submit already captured. Either creates
+      // a library drill the saved week never carries.
+      busy: boolean
       // The title and skill for one row, resolved by the host.
       meta: (act: Activity) => { title: string; skill: string | null }
       onMove: (i: number, dir: -1 | 1) => void
@@ -614,12 +634,13 @@ export function ActivityListEditor({
                 onRole={(role) => onRole(i, role)}
                 onMove={(dir) => variant.onMove(i, dir)}
                 onRemove={() => onRemove(i)}
+                busy={variant.busy}
                 onTurnIntoDrill={onTurnIntoDrill ? () => onTurnIntoDrill(i) : undefined}
               />
             )
           })}
         </div>
-        <AddActivityBar busy={false} onAddLibrary={onAddLibrary} onAddCustom={onAddCustom} onNewDrill={onNewDrill} />
+        <AddActivityBar busy={variant.busy} onAddLibrary={onAddLibrary} onAddCustom={onAddCustom} onNewDrill={onNewDrill} />
       </>
     )
   }

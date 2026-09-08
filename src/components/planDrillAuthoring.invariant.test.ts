@@ -148,11 +148,31 @@ describe('no COACH-12 or COACH-13 semantics have leaked in', () => {
     expect(src).not.toMatch(/\.\.\.form,\s*phase/)
   })
 
-  it('the hook gates on drills.create and on nothing new', () => {
+  it('the hook reads exactly two capabilities, both of them already existing', () => {
+    // It read one until Codex's second round. The affordances still need
+    // drills.create and nothing else; Save and draw it additionally needs
+    // whatever the Drill Maker ROUTE is gated on, because it navigates
+    // there. Neither is new and neither is granted here: the second is
+    // read only to WITHHOLD an action, never to widen one.
     const src = code(read(HOOK))
     expect(src).toMatch(/DRILL_CREATE_CAP = 'drills\.create'/)
+    expect(src).toMatch(/DRILL_MAKER_ROUTE_CAP = 'sessions\.create'/)
     expect(src).toMatch(/caps\.has\(DRILL_CREATE_CAP\)/)
-    expect(src).not.toMatch(/caps\.has\('(?!drills\.create)/)
+    expect(src).toMatch(/caps\.has\(DRILL_MAKER_ROUTE_CAP\)/)
+    // Read through the named constants, never as a bare literal, so the
+    // check below can compare one spelling against the route.
+    expect(src).not.toMatch(/caps\.has\('/)
+  })
+
+  it('the route capability it withholds on is the one App.tsx actually gates the Drill Maker with', () => {
+    // The whole point of withholding rather than widening is that the two
+    // agree. If the route guard moves and this constant does not, the hook
+    // either offers a trip that bounces (the defect Codex found) or hides
+    // one that would have worked. Read from App.tsx rather than restated.
+    const app = code(read('App.tsx'))
+    const m = app.match(/<Route element=\{<RequireCap cap="([^"]+)" \/>\}>\s*<Route path="\/drill\/:id\/diagram"/)
+    expect(m, 'the Drill Maker route guard was not found in App.tsx').toBeTruthy()
+    expect(code(read(HOOK))).toMatch(new RegExp(`DRILL_MAKER_ROUTE_CAP = '${m![1].replace('.', '\\.')}'`))
   })
 })
 

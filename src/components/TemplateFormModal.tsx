@@ -167,6 +167,11 @@ export function TemplateFormModal({
           activities={form.activities}
           variant={{
             kind: 'plan',
+            // The same pending state Cancel and Save already freeze on. The
+            // list froze on nothing until COACH-11 put a write in its add
+            // bar; see the variant's own note for the two orderings that
+            // created a drill the saved week never carried.
+            busy: pending,
             meta: (a) => {
               const drill = a.drillId ? drillById[a.drillId] : null
               return { title: actTitle(a), skill: drill?.skill ?? null }
