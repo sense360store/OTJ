@@ -561,10 +561,16 @@ class TestPhaseArgument(unittest.TestCase):
         """Nothing unreadable is ever treated as satisfying the pin.
 
         The comparison stringifies whatever the readback carried, so an empty
-        string, a null, a missing key, a number and a whitespace lookalike must
-        all land on the failure path rather than coincidentally matching. A
-        gate that accepted any of these would pass on a readback that never
-        actually reported a ledger version.
+        string, a null, a missing key, a version name and a whitespace
+        lookalike must all land on the failure path rather than coincidentally
+        matching. A gate that accepted any of these would pass on a readback
+        that never actually reported a ledger version.
+
+        The one readback shape that stringifying DOES let through is the same
+        digits typed as a JSON number, which this docstring used to name here
+        as refused while the test immediately below proved the opposite. That
+        leniency is deliberate and is argued where it is pinned; it is named
+        here only so the two statements agree.
         """
         malformed = ("", "   ", None, "20260908094005 ", " 20260908094005", "null",
                      "0053_venue_layouts")
