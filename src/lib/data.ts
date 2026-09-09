@@ -602,10 +602,16 @@ export function sessionMinutes(s: { activities: Activity[] }): number {
 // ../lib/ageGroups over it (COACH-5). Not a parameter here, for the reason
 // the team is not one: newSessionCoverage.invariant.test.ts pins this
 // signature.
+// The name every new draft starts with, and the one name nobody chose.
+// Named rather than written twice so the guided builder can tell an
+// untouched name from one a coach wrote, and suggest over the first
+// without ever overwriting the second (src/lib/guidedSession.ts).
+export const NEW_SESSION_NAME = 'New Session'
+
 export function blankSession(coachId: string): Session {
   return {
     id: crypto.randomUUID(),
-    name: 'New Session',
+    name: NEW_SESSION_NAME,
     date: '2026-06-16',
     time: '17:30',
     ageGroup: LEGACY_DEFAULT_AGE_GROUP,

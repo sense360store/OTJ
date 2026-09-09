@@ -28,6 +28,7 @@ import { Feedback } from '../../src/routes/Feedback'
 import { AdminUsers } from '../../src/routes/AdminUsers'
 import { AdminTeams } from '../../src/routes/AdminTeams'
 import { Planner } from '../../src/routes/Planner'
+import { PLANNER_GUIDE_MODE, PLANNER_MODE_PARAM } from '../../src/lib/guidedSession'
 import { DrillDiagramEditor } from '../../src/routes/DrillDiagramEditor'
 import { TemplateFormModal } from '../../src/components/TemplateFormModal'
 import { RestoredTemplateEditor } from '../../src/components/RestoredTemplateEditor'
@@ -360,8 +361,16 @@ function authEntry(): string {
 // COACH-11: the planner opens on a new session by default, and on the
 // harness coach's own saved one at `at=existing`, which is the address
 // that carries a custom row for Turn into a drill.
+//
+// COACH-14A adds `at=guide`, the guided builder over the same new
+// session. It is the planner's own address with the mode parameter,
+// which is the whole of how the guide is reached in the product, so the
+// harness needs no route and no fixture of its own for it.
 function plannerEntry(): string {
-  return params.get('at') === 'existing' ? `/planner?sessionId=${PLANNER_SESSION_ID}` : '/planner'
+  const at = params.get('at')
+  if (at === 'existing') return `/planner?sessionId=${PLANNER_SESSION_ID}`
+  if (at === 'guide') return `/planner?${PLANNER_MODE_PARAM}=${PLANNER_GUIDE_MODE}`
+  return '/planner'
 }
 
 const ENTRY: Record<string, string> = {

@@ -91,6 +91,11 @@ const OWNED_FILES = [
   // plan segment's own share and phase hue, which is data rather than a
   // size or a step, and neither rule here reads it.
   'routes/Sessions.tsx',
+  // VISUAL-03 with COACH-14A: the guided session builder, a new surface
+  // written on the shared system from the start rather than adopted
+  // later. It writes no inline style at all: its layout is its own
+  // stylesheet below, and every control is a shared primitive.
+  'components/GuidedPlanner.tsx',
 ]
 
 
@@ -500,6 +505,11 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
     // first stylesheet the route has had; every step in it is on the scale.
     'routes/Sessions.tsx',
     'routes/Sessions.css',
+    // VISUAL-03 with COACH-14A: the guided session builder and its own
+    // stylesheet. The component writes no inline style, so every step it
+    // has is in the sheet and every one of them is on the scale.
+    'components/GuidedPlanner.tsx',
+    'components/GuidedPlanner.css',
   ]
 
   it('writes no inline margin, padding or gap outside the spacing scale', () => {
@@ -565,6 +575,8 @@ describe('a wave that owns a file owns its spacing too, not only its type', () =
       'components/VenueLayoutPitch.tsx',
       'routes/Sessions.tsx',
       'routes/Sessions.css',
+      'components/GuidedPlanner.tsx',
+      'components/GuidedPlanner.css',
     ]) {
       expect(SPACING_OWNED, `${f} is covered`).toContain(f)
       expect(sourceFiles.map(rel), `${f} exists`).toContain(f)

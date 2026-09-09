@@ -5028,6 +5028,162 @@ const focusReturned = async (page, d) => {
   }
 }
 
+/* ---- COACH-14A: the guided session builder ----
+   The rules are pinned in src/lib/guidedSession.test.ts and what the
+   surfaces SHOW in src/routes/guidedSession.screens.test.tsx. Neither can
+   reach what only a browser settles, and this slice has four of those:
+   effects do not run under the static renderer, so the generated session
+   name is invisible there; focus moving to the new step's heading needs a
+   document; "Back and Continue lose nothing" and "switching to the full
+   planner keeps everything" are state transitions no static render can
+   perform; and a hit area is a computed style. All of it is driven here,
+   at 390 and at 1280, in both themes. */
+{
+  const stepHeading = (page) => page.evaluate(() => document.querySelector('#guided-step-heading')?.textContent?.trim() ?? '')
+  const guideName = (page) => page.evaluate(() => document.querySelector('.guide .field input')?.value ?? null)
+  // Through the shared guard, so a control that is not there records the
+  // failure and returns false rather than rejecting and ending the run.
+  const press = async (page, selector, what) => {
+    const ok = await pressed(page.locator(selector).first(), what)
+    if (ok) await page.waitForTimeout(150)
+    return ok
+  }
+
+  /* ---- the guide opens, says where it is, and fills in what OTJ knows ---- */
+  {
+    const page = await open('planner', 390, { caps: 'author', at: 'guide' })
+    if (!page.blank) {
+      const shape = await page.evaluate(() => ({
+        guides: document.querySelectorAll('.guide').length,
+        steps: document.querySelectorAll('nav[aria-label="Session builder steps"] li').length,
+        current: document.querySelector('li[aria-current="step"]')?.textContent?.trim() ?? '',
+        over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      }))
+      check('the guided builder renders one surface with all four steps listed',
+        shape.guides === 1 && shape.steps === 4, JSON.stringify(shape))
+      check('it says which step the coach is on', shape.current.includes('Session'), shape.current)
+      check('it does not scroll sideways on a phone', shape.over <= 0, `overflow ${shape.over}px`)
+
+      // The name suggestion is written by an effect, so this is the only
+      // place in the suite that can see it at all.
+      const name = await guideName(page)
+      check('it suggests a session name rather than leaving the blank default',
+        typeof name === 'string' && name !== 'New Session' && name.endsWith('training'), String(name))
+
+      // A hit area is the box or the pseudo-element the shared chip carries
+      // its target on, which is the same rule the COACH-11 block measures.
+      const short = await page.evaluate(() => {
+        const px = (v) => (v.endsWith('px') ? parseFloat(v) : 0)
+        const out = []
+        for (const el of document.querySelectorAll('.guide button, .guide input, .guide select')) {
+          const b = el.getBoundingClientRect()
+          if (b.height === 0) continue
+          const a = getComputedStyle(el, '::after')
+          const h = a.content === 'none' ? b.height : Math.max(b.height, px(a.height))
+          if (h < 44) out.push(`${el.tagName}.${el.className} ${Math.round(h)}px`)
+        }
+        return out
+      })
+      check('every guided control reaches a 44px hit area at 390', short.length === 0, short.join(' | '))
+      await page.close()
+    }
+  }
+
+  /* ---- Continue moves the step AND moves focus to its heading ---- */
+  {
+    const page = await open('planner', 390, { caps: 'author', at: 'guide' })
+    if (!page.blank) {
+      const before = await stepHeading(page)
+      const moved = await press(page, '.guide-foot button.btn-primary', 'Continue')
+      const after = await stepHeading(page)
+      const focused = await page.evaluate(() => document.activeElement?.id ?? '')
+      check('Continue advances the step', moved && before !== after && after.length > 0, `${before} -> ${after}`)
+      check('focus follows the step to its new heading', focused === 'guided-step-heading', focused || 'nothing focused')
+      await page.close()
+    }
+  }
+
+  /* ---- Back and Continue lose nothing a coach entered ---- */
+  {
+    const page = await open('planner', 390, { caps: 'author', at: 'guide' })
+    if (!page.blank) {
+      const name = await guideName(page)
+      await press(page, '.guide-foot button.btn-primary', 'Continue')
+      const pickedFocus = await press(page, '.guide-focuses button.chip', 'a focus chip')
+      const chosen = await page.evaluate(() => document.querySelector('.guide .field input')?.value ?? '')
+      await press(page, '.guide-foot button.btn-quiet', 'Back')
+      const nameBack = await guideName(page)
+      check('the name entered on the first step survives Back', pickedFocus && nameBack === name, `${name} -> ${nameBack}`)
+      await press(page, '.guide-foot button.btn-primary', 'Continue')
+      const focusBack = await page.evaluate(() => document.querySelector('.guide .field input')?.value ?? '')
+      check('the focus chosen on the second step survives Back and Continue',
+        chosen.length > 0 && focusBack === chosen, `${chosen} -> ${focusBack}`)
+      await page.close()
+    }
+  }
+
+  /* ---- a shape writes a plan that totals the length asked for ---- */
+  {
+    const page = await open('planner', 390, { caps: 'author', at: 'guide' })
+    if (!page.blank) {
+      for (let i = 0; i < 2; i++) await press(page, '.guide-foot button.btn-primary', 'Continue')
+      const onShape = (await stepHeading(page)).toLowerCase().includes('shaped')
+      const shapes = await page.locator('.guide-shape').count()
+      check('the shape step offers three starting structures', onShape && shapes === 3, `${shapes} shapes`)
+      if (shapes === 3) {
+        await press(page, '.guide-shape:nth-of-type(2)', 'the four station shape')
+        const preview = await page.evaluate(() => ({
+          rows: document.querySelectorAll('.guide-plan li').length,
+          total: document.querySelector('.guide-target-big')?.textContent?.trim() ?? '',
+        }))
+        check('four stations previews a warm up, four stations and a games phase, totalling the target',
+          preview.rows === 6 && preview.total === '60', JSON.stringify(preview))
+        await press(page, '.guide-foot button.btn-primary', 'Continue')
+        const composing = await page.evaluate(() => ({
+          rows: document.querySelectorAll('.act-card').length,
+          addBar: document.querySelectorAll('.add-bar .add-slot').length,
+          total: document.querySelector('.guide-target-big')?.textContent?.trim() ?? '',
+          save: [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Save session'),
+        }))
+        check('the composing step mounts the shared editor over the plan the shape wrote',
+          composing.rows === 6 && composing.addBar === 3 && composing.total === '60', JSON.stringify(composing))
+        check('and offers the planner own Save session', composing.save, JSON.stringify(composing))
+
+        /* ---- leaving for the full planner keeps the whole draft ---- */
+        await press(page, '.guide-foot button.guide-exit', 'Use full planner')
+        const full = await page.evaluate(() => ({
+          planner: document.querySelectorAll('.planner').length,
+          name: document.querySelector('.planner-side .field input')?.value ?? '',
+          rows: document.querySelectorAll('.act-card').length,
+          address: location.search,
+        }))
+        check('switching to the full planner keeps the name and every activity',
+          full.planner === 1 && full.rows === 6 && full.name.endsWith('training'), JSON.stringify(full))
+        check('and takes the guided mode back off the address', !full.address.includes('mode=guide'), full.address)
+      }
+      await page.close()
+    }
+  }
+
+  /* ---- the dark theme, and a desktop width ---- */
+  {
+    const page = await open('planner', 1280, { caps: 'author', at: 'guide', theme: 'dark' })
+    if (!page.blank) {
+      const r = await page.evaluate(() => {
+        const card = document.querySelector('.guide-card')
+        return {
+          ground: card ? getComputedStyle(card).backgroundColor : 'no card',
+          over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        }
+      })
+      check('the guided card takes a ground in the dark theme rather than the page behind it',
+        r.ground !== 'no card' && r.ground !== 'rgba(0, 0, 0, 0)', r.ground)
+      check('the guide does not scroll sideways at 1280', r.over <= 0, `overflow ${r.over}px`)
+      await page.close()
+    }
+  }
+}
+
 /* ---- reduced motion ---- */
 {
   const page = await open('dialog', 1280, { reducedMotion: true })

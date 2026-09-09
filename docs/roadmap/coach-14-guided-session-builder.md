@@ -1,6 +1,6 @@
 # COACH-14 — Guided Session Builder & Quick Drill Creation
 
-Status: **Next**
+Status: **In progress** (COACH-14A, the foundation, is built; 14B Quick drill, 14C the review step and 14D the PDF and share actions follow)
 Priority: **P1 — priority product work**
 Workstream: Coaching workflow / Planning
 Added: 9 September 2026

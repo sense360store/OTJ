@@ -59,6 +59,11 @@ Query string, all optional:
 | `state` | `default`, `loading`, `rowsloading`, `empty`, `error`, `archived`, `withdrawn`, `noseason`, `stale`, `overlimit`, `allactions`, `archivedteam`, `inflight`, `writefails`, `history`, `historylong`, `historyerror`, `renewempty`, `renewalldone`, `spondresult`, `longnames`, `loadingmore`, `guarded`, `photo`, `photoinflight`, `photofails`, `photoslow`, `profileloading`, `longvalues`, `writeslow`, `writeslowfails`, `longclub`, `longmotto`, `commentsloading`, `commentserror`, `promotewarning`, `adminloading`, `adminerror`, `noteams`, `gridloading`, `gridunavailable`, `lastadmin`, `statesunknown`, `orderunset`, `orderincomplete`, `homeloading`, `homeerror`, `nosessions`, `nothingscheduled`, `quietweek`, `endedtoday`, `live`, `nocontent`, `noteam`, `novenues`, `nolayouts`, `noagegroups`, `sessionsloading`, `sessionserror`, `myteam` |
 | `at` | the address a screen opens on, when it differs from `state` |
 
+On `screen=planner`, `at` takes `existing` (the harness coach's own saved
+session) and `guide` (COACH-14A's guided builder over a new session, which is
+the planner's own address with the mode parameter, so the harness adds no
+route of its own for it).
+
 `state` is read by the screens whose acceptance is a state matrix rather than a
 single render. Today that is Registered players, whose reads answer from it, so
 every state a screenshot claims is the screen's own branch: `loading` leaves the
