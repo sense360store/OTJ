@@ -5091,12 +5091,22 @@ const focusReturned = async (page, d) => {
   {
     const page = await open('planner', 360, { caps: 'author', at: 'guide' })
     if (!page.blank) {
-      const clipped = await page.evaluate(() =>
-        [...document.querySelectorAll('.guide-step-label')]
-          .filter((el) => el.scrollWidth > el.clientWidth + 1)
-          .map((el) => `${el.textContent} ${el.scrollWidth}>${el.clientWidth}`),
-      )
-      check('no step label is clipped at 360', clipped.length === 0, clipped.join(' | '))
+      const labels = await page.evaluate(() => {
+        const out = { clipped: [], named: 0, readable: 0 }
+        for (const el of document.querySelectorAll('.guide-step-label')) {
+          const shown = el.getBoundingClientRect().width > 1
+          // A name is still a name to a screen reader when it is only
+          // visually hidden, which is what the others are at this width.
+          if ((el.textContent ?? '').trim().length > 0) out.readable++
+          if (!shown) continue
+          out.named++
+          if (el.scrollWidth > el.clientWidth + 1) out.clipped.push(`${el.textContent} ${el.scrollWidth}>${el.clientWidth}`)
+        }
+        return out
+      })
+      check('no step label is clipped at 360', labels.clipped.length === 0, labels.clipped.join(' | '))
+      check('the current step is the one named at 360, and the rest keep their names for a screen reader',
+        labels.named === 1 && labels.readable === 4, JSON.stringify(labels))
       await page.close()
     }
   }
