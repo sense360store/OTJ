@@ -645,6 +645,16 @@ const startedHoursAgo = (hoursAgo: number): { date: string; time: string } => {
   }
 }
 
+/* The live fixture's start, hoisted and PUBLISHED, so a harness proof can
+   assert the card's date against the same instant the fixture used instead
+   of recomputing "today". Recomputing is what broke the Sessions live proof
+   the moment this fixture was correctly allowed to fall on yesterday in the
+   hour after midnight: the Home shots passed and the Sessions ones failed,
+   in the same window, for the same reason. A proof that reads this cannot
+   drift from the fixture, whenever the run happens. */
+export const LIVE_SESSION_START = startedHoursAgo(1)
+;(globalThis as unknown as { __liveSessionDate?: string }).__liveSessionDate = LIVE_SESSION_START.date
+
 export const HOME_SESSIONS_FOR = (s: HarnessState): Session[] => {
   switch (s) {
     case 'nosessions':
@@ -683,7 +693,7 @@ export const HOME_SESSIONS_FOR = (s: HarnessState): Session[] => {
           id: 's-live',
           name: 'Titans Tuesday',
           coachId: 'coach-me',
-          ...startedHoursAgo(1),
+          ...LIVE_SESSION_START,
           liveActivityIndex: 1,
           liveActivityStartedAt: new Date(Date.now() - 20 * 60000).toISOString(),
         }),

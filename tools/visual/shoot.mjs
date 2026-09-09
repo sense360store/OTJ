@@ -724,13 +724,20 @@ const REACHED_STATE = {
       ? // Sessions draws no live cue of its own (recorded in the roadmap);
         // what this state proves here is the lifecycle rule: the session
         // being driven, an hour past its start, is still an Upcoming card
-        // dated today, offering Start to the coach driving it.
+        // dated the day it started on, offering Start to its driver.
         page.evaluate(() => {
-          const today = new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+          // The FIXTURE'S OWN DATE, formatted the way the card formats it,
+          // never a fresh reading of "today": the live session starts an
+          // hour ago, which is yesterday for the hour after midnight, and a
+          // recomputed today failed every Sessions live shot in exactly the
+          // window the Home fixture fix repaired. Absent, it fails closed.
+          const iso = window.__liveSessionDate
+          if (!iso) return false
+          const shown = new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
           return [...document.querySelectorAll('.session-card')].some(
             (c) =>
               c.querySelector('h2')?.textContent === 'Titans Tuesday' &&
-              c.querySelector('.sc-date')?.textContent === today &&
+              c.querySelector('.sc-date')?.textContent === shown &&
               [...c.querySelectorAll('.btn')].some((b) => b.textContent === 'Start'),
           )
         })
