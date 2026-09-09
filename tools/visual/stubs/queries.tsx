@@ -113,11 +113,20 @@ export const useMyCapabilities = () => ({ caps: fixtures.caps, isPending: false 
    that already reads it. */
 const ON_HOME = harnessScreen === 'home'
 const homeRows = <T,>(rows: T) => (ON_HOME ? rows : undefined)
+/* VISUAL-02, Sessions: the club calendar reads the same schedule, so it
+   answers from the same fixtures and the same states as Home, and no other
+   screen does. Its two read states are its own names, because the gate
+   they drive is Sessions' page. */
+const ON_SESSIONS = harnessScreen === 'sessions'
+const ON_SCHEDULE = ON_HOME || ON_SESSIONS
+const scheduleRows = <T,>(rows: T) => (ON_SCHEDULE ? rows : undefined)
 
 export const useSessions = () => {
   if (ON_HOME && fixtures.state === 'homeloading') return pendingQuery<typeof SESSIONS>()
   if (ON_HOME && fixtures.state === 'homeerror') return failedQuery<typeof SESSIONS>()
-  return query(homeRows(HOME_SESSIONS_FOR(fixtures.state)) ?? SESSIONS)
+  if (ON_SESSIONS && fixtures.state === 'sessionsloading') return pendingQuery<typeof SESSIONS>()
+  if (ON_SESSIONS && fixtures.state === 'sessionserror') return failedQuery<typeof SESSIONS>()
+  return query(scheduleRows(HOME_SESSIONS_FOR(fixtures.state)) ?? SESSIONS)
 }
 export const useUpsertSession = mutation
 export const useDeleteSession = mutation
@@ -152,14 +161,17 @@ export const useTeams = () => {
   return query(teams, { dataUpdatedAt })
 }
 export const useTeamMap = () => byId(useAdminTeams())
-// `noteam` is the parent the club has not placed yet, and it is read only
-// on Home: Sessions scopes its schedule through this read too and would
-// otherwise wear the same note in a shot named for nothing.
+// `noteam` is the parent the club has not placed yet, read on Home and on
+// Sessions, which scopes its schedule through this read too. `myteam` is a
+// parent on ONE team, which is the shape that gives Sessions its My team and
+// All club chips; the default parent is on every team and gets no toggle.
 export const useMyTeams = () =>
   query(
-    ON_HOME && fixtures.state === 'noteam'
+    ON_SCHEDULE && fixtures.state === 'noteam'
       ? { teamIds: [] as string[], allTeams: false }
-      : { teamIds: TEAMS.map((t) => t.id), allTeams: true },
+      : ON_SESSIONS && fixtures.state === 'myteam'
+        ? { teamIds: ['titans'], allTeams: false }
+        : { teamIds: TEAMS.map((t) => t.id), allTeams: true },
   )
 /* The venues read answers with rows on the two venue admin screens only, so
    Home's venue pill and every picker keep reading what they always read. */
@@ -216,9 +228,9 @@ export const useVenueLayouts = () =>
   query(fixtures.state === 'nolayouts' ? ([] as VenueLayout[]) : ADMIN_LAYOUTS, { dataUpdatedAt: 1 })
 export const useSaveVenueLayout = countedWrite('saveVenueLayout')
 export const useDeleteVenueLayout = countedWrite('deleteVenueLayout')
-// The venue is answered on Home only, so Sessions' venue pill, which reads
-// the same map, keeps rendering exactly what it always rendered: nothing.
-export const useVenueMap = () => homeRows(HOME_VENUES_FOR(fixtures.state)) ?? {}
+// The venue is answered on Home and Sessions, the two screens that render
+// a venue pill; everywhere else the map is empty, as it always was.
+export const useVenueMap = () => scheduleRows(HOME_VENUES_FOR(fixtures.state)) ?? {}
 /* The members a name is resolved through. Its ids are the FEEDBACK fixtures'
    own; `coach-them`, which the SESSIONS fixtures use, is deliberately absent,
    so Home and Sessions still fall back to "Another coach" and no shot either

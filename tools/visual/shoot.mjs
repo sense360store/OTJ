@@ -116,6 +116,27 @@ const SHOTS = [
   ...[390, 1280].map((w) => ({ screen: 'planner', caps: 'author', w, open: 'drawing' })),
   ...[390, 1280].map((w) => ({ screen: 'planner', caps: 'author', w, open: 'returned' })),
   ...[390, 1280].map((w) => ({ screen: 'weekplan', caps: 'author', w, open: 'returned' })),
+  /* ---- VISUAL-02, Sessions -----------------------------------------------
+     The club calendar. Its three default capability variants are already
+     shot at every width above (Sessions is a VISUAL-01 acceptance surface);
+     this is its STATE MATRIX, at a phone width and a desktop width, both
+     themes, every one reached through what the reads answer. The coach
+     states run against `coach`, the parent states against `parent`, whose
+     scope is the one thing Sessions renders differently for a parent. */
+  ...['sessionsloading', 'sessionserror', 'nosessions', 'nothingscheduled', 'endedtoday', 'live'].flatMap((state) =>
+    [390, 1280].map((w) => ({ screen: 'sessions', caps: 'coach', state, w })),
+  ),
+  ...['sessionsloading', 'sessionserror', 'nosessions', 'endedtoday', 'noteam', 'myteam'].flatMap((state) =>
+    [390, 1280].map((w) => ({ screen: 'sessions', caps: 'parent', state, w })),
+  ),
+  // The strings a club chooses at the length a club would really make them,
+  // on a card at the narrowest phone too, because that is where a title
+  // pushes the card wide.
+  ...['coach', 'parent'].flatMap((caps) => [360, 390, 1280].map((w) => ({ screen: 'sessions', caps, state: 'longnames', w }))),
+  // The Past view, driven through the chip a coach presses: the one view
+  // the default shot cannot show, because Upcoming is what the screen opens
+  // on by rule.
+  ...[390, 1280].map((w) => ({ screen: 'sessions', caps: 'coach', w, open: 'past' })),
 
   /* ---- VISUAL-02, Registered players ---------------------------------
      The wave's primary acceptance surface, and the one that carries the two
@@ -439,6 +460,15 @@ const isOverlay = (s) => !!s.dialog || !!s.feedbackEntry?.overlay || !!s.adminEn
 // state axis was the half that had no proof when it was introduced.
 const REACHED = {
   more: '.more-sheet',
+  /* ---- Sessions: the Past view, pressed ---- */
+  // The chip is pressed AND the list followed it: the one finished night the
+  // fixture club holds is on screen and the upcoming ones are not.
+  past: async (page) =>
+    page.evaluate(
+      () =>
+        [...document.querySelectorAll('.chip[aria-pressed="true"]')].some((c) => c.textContent === 'Past') &&
+        [...document.querySelectorAll('.session-card h2')].map((h) => h.textContent).join('|') === 'Gladiators last week',
+    ),
   // The header's own overflow, which is a popup rather than the bottom sheet
   // `more` names. Scoped to .players-more so a row menu left open by another
   // press could not stand in for it.
@@ -566,7 +596,18 @@ const REACHED_STATE = {
                 (el.textContent ?? '').includes('with the Trojans joining for the second half'),
               ) && (document.body.textContent ?? '').includes('Community Sports Hub'),
           )
-        : visible(page, '.activity-item:has-text("Fotheringay-Wallington-Smythe")'),
+        : s.screen === 'sessions'
+          ? // The same long session name as a card heading, the long focus
+            // line under it, and the long venue and the long team names in
+            // its pills.
+            page.evaluate(() => {
+              const card = [...document.querySelectorAll('.session-card')].find((c) =>
+                (c.querySelector('h2')?.textContent ?? '').includes('with the Trojans joining for the second half'),
+              )
+              const text = card?.textContent ?? ''
+              return !!card && text.includes('Community Sports Hub') && text.includes('then playing forward at the first chance')
+            })
+          : visible(page, '.activity-item:has-text("Fotheringay-Wallington-Smythe")'),
   history: '.modal .history-item',
   // What this state alone produces: the press was made and NOTHING arrived.
   // The ordinary feed answers the same press with twelve more rows, so this
@@ -612,19 +653,43 @@ const REACHED_STATE = {
   // its three first steps, and the parent's No sessions yet card. Which is
   // proved follows the capability set the shot was taken under.
   nosessions: async (page, s) =>
-    s.caps === 'parent'
+    s.screen === 'sessions'
+      ? // Sessions' own empty: the Empty primitive, telling a coach to plan
+        // a first session. The default parent is on every team, so their
+        // sentence is the team scoped one; that it names an All club chip
+        // the all teams parent is never shown is a copy defect recorded in
+        // the roadmap, and the proof pins the sentence the screen renders.
+        page.evaluate(
+          (parent) =>
+            (document.querySelector('.empty h3')?.textContent ?? '') === 'No sessions here yet' &&
+            (document.querySelector('.empty p')?.textContent ?? '').includes(
+              parent ? 'Nothing scheduled for your team' : 'Plan your first session',
+            ) &&
+            !document.querySelector('.session-card'),
+          s.caps === 'parent',
+        )
+      : s.caps === 'parent'
       ? visible(page, '.parent-section h2:has-text("No sessions yet")')
       : page.evaluate(
           () =>
             (document.querySelector('.hero h2')?.textContent ?? '') === 'Welcome to the Training Hub' &&
             document.querySelectorAll('.hero-acts .btn').length === 3,
         ),
-  nothingscheduled: async (page) =>
-    page.evaluate(
-      () =>
-        (document.querySelector('.hero h2')?.textContent ?? '') === 'Nothing scheduled yet' &&
-        document.querySelectorAll('.hero-acts .btn').length === 1,
-    ),
+  nothingscheduled: async (page, s) =>
+    s.screen === 'sessions'
+      ? // Every session is past: Upcoming is empty and the note offers Past,
+        // because the club has history, rather than claiming it has none.
+        page.evaluate(
+          () =>
+            (document.querySelector('.empty h3')?.textContent ?? '') === 'No sessions here yet' &&
+            /Past/.test(document.querySelector('.empty p')?.textContent ?? '') &&
+            !document.querySelector('.session-card'),
+        )
+      : page.evaluate(
+          () =>
+            (document.querySelector('.hero h2')?.textContent ?? '') === 'Nothing scheduled yet' &&
+            document.querySelectorAll('.hero-acts .btn').length === 1,
+        ),
   // The hero counts down past the week AND the week list is empty, which is
   // the pair this state exists to show together.
   quietweek: async (page) =>
@@ -637,22 +702,74 @@ const REACHED_STATE = {
   // The ended Badge on a row, and on the coach home that row is NOT the
   // hero: the hero is tomorrow's session.
   endedtoday: async (page, s) =>
-    page.evaluate(
-      (parent) =>
-        !!document.querySelector('.badge:has(.badge-dot)') &&
-        [...document.querySelectorAll('.badge')].some((b) => (b.textContent ?? '').includes('Ended earlier today')) &&
-        (parent || (document.querySelector('.hero h2')?.textContent ?? '') === 'Titans Tuesday'),
-      s.caps === 'parent',
-    ),
-  live: async (page) =>
-    page.evaluate(
-      () =>
-        (document.querySelector('.hero .eyebrow')?.textContent ?? '').includes('Live now') &&
-        (document.querySelector('.hero h2')?.textContent ?? '') === 'Titans Tuesday' &&
-        !!document.querySelector('.hero-acts .btn:nth-child(2) svg'),
-    ),
+    s.screen === 'sessions'
+      ? // The ended Badge on ITS card, which is still in the Upcoming list.
+        page.evaluate(
+          () =>
+            [...document.querySelectorAll('.session-card')].some(
+              (c) =>
+                c.querySelector('h2')?.textContent === 'Gladiators early session' &&
+                (c.querySelector('.badge:has(.badge-dot)')?.textContent ?? '').includes('Ended earlier today'),
+            ) && [...document.querySelectorAll('.chip[aria-pressed="true"]')].some((c) => c.textContent === 'Upcoming'),
+        )
+      : page.evaluate(
+          (parent) =>
+            !!document.querySelector('.badge:has(.badge-dot)') &&
+            [...document.querySelectorAll('.badge')].some((b) => (b.textContent ?? '').includes('Ended earlier today')) &&
+            (parent || (document.querySelector('.hero h2')?.textContent ?? '') === 'Titans Tuesday'),
+          s.caps === 'parent',
+        ),
+  live: async (page, s) =>
+    s.screen === 'sessions'
+      ? // Sessions draws no live cue of its own (recorded in the roadmap);
+        // what this state proves here is the lifecycle rule: the session
+        // being driven, an hour past its start, is still an Upcoming card
+        // dated the day it started on, offering Start to its driver.
+        page.evaluate(() => {
+          // The FIXTURE'S OWN DATE, formatted the way the card formats it,
+          // never a fresh reading of "today": the live session starts an
+          // hour ago, which is yesterday for the hour after midnight, and a
+          // recomputed today failed every Sessions live shot in exactly the
+          // window the Home fixture fix repaired. Absent, it fails closed.
+          const iso = window.__liveSessionDate
+          if (!iso) return false
+          const shown = new Date(iso).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+          return [...document.querySelectorAll('.session-card')].some(
+            (c) =>
+              c.querySelector('h2')?.textContent === 'Titans Tuesday' &&
+              c.querySelector('.sc-date')?.textContent === shown &&
+              [...c.querySelectorAll('.btn')].some((b) => b.textContent === 'Start'),
+          )
+        })
+      : page.evaluate(
+          () =>
+            (document.querySelector('.hero .eyebrow')?.textContent ?? '').includes('Live now') &&
+            (document.querySelector('.hero h2')?.textContent ?? '') === 'Titans Tuesday' &&
+            !!document.querySelector('.hero-acts .btn:nth-child(2) svg'),
+        ),
   nocontent: '.empty:has-text("Nothing here yet")',
+  // On Home and on Sessions alike: the shared Note above club wide content.
   noteam: '.note-info:has-text("No team set yet")',
+  /* ---- Sessions ---- */
+  // The page level gate and the failed read: the labelled spinner or the
+  // announced error, and NO page title behind it.
+  sessionsloading: async (page) =>
+    page.evaluate(() => !!document.querySelector('.content > .loading[role="status"]') && !document.querySelector('h1')),
+  sessionserror: async (page) =>
+    page.evaluate(() => !!document.querySelector('.content > .state-error[role="alert"]') && !document.querySelector('h1')),
+  // A parent on one team: My team pressed, All club offered, and the list
+  // narrowed to that team's nights plus nothing of another team's.
+  myteam: async (page) =>
+    page.evaluate(() => {
+      const chips = [...document.querySelectorAll('.chip')].map((c) => `${c.textContent}:${c.getAttribute('aria-pressed')}`)
+      const names = [...document.querySelectorAll('.session-card h2')].map((h) => h.textContent ?? '')
+      return (
+        chips.includes('My team:true') &&
+        chips.includes('All club:false') &&
+        names.includes('Titans Tuesday') &&
+        !names.includes('Trojans Thursday')
+      )
+    }),
 }
 
 async function visible(page, selector) {
@@ -855,6 +972,22 @@ for (const theme of ['light', 'dark']) {
         if (s.open === 'delete') {
           if (await press(/^Select all \d+ shown$/)) await press(/^Delete \d+ players?$/)
         }
+      }
+    }
+    if (s.open === 'past') {
+      // Pressed, never faked: the Past chip, named exactly, and then the
+      // list is waited for rather than the clock, so the shot is of the view
+      // that followed the press.
+      const past = page.getByRole('button', { name: 'Past', exact: true })
+      if ((await past.count()) === 0) {
+        failures++
+        console.log(`ERROR ${name(s, theme)}: no Past chip, so the Past view was never opened`)
+      } else {
+        await past.first().click()
+        await page
+          .locator('.session-card h2', { hasText: 'Gladiators last week' })
+          .waitFor({ timeout: 3000 })
+          .catch(() => {})
       }
     }
     if (s.open === 'moreactions') {

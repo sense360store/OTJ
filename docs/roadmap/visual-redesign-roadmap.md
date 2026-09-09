@@ -1,6 +1,6 @@
 # OTJ visual redesign roadmap
 
-Status: approved direction. VISUAL-00 and VISUAL-01 delivered; VISUAL-02 is in progress, adopted route by route in eight merged pull requests, Home most recently in #228, and Sessions and the remaining admin screens still to come.
+Status: approved direction. VISUAL-00 and VISUAL-01 delivered; VISUAL-02 is in progress, adopted route by route in eight merged pull requests, Home most recently in #228, with Sessions adopted in a PR under review and the remaining admin screens still to come.
 
 Created: 27 August 2026. VISUAL-00 completed 27 August 2026. VISUAL-01 completed 27 August 2026 (merged at 23:16 UTC, which was already 28 August in Yorkshire). Last reviewed 6 September 2026.
 
@@ -125,11 +125,10 @@ Players is deliberately in this wave only after #191, so bulk selection, depende
 **Status, 7 September 2026: in progress.** Adopted, each in its own reviewed
 PR: Registered Players (#212, #213), Activity (#214), Account (#215), Login and
 Set Password (#216), Feedback (#217), Admin Users and Admin Teams (#218), and
-Home (#228, merged 7 September 2026; see Home below). Not yet adopted from
-the initial surface group: Sessions, which is also a VISUAL-01 acceptance
-surface and so has been checked but not adopted in full, and the admin
-screens beyond Users and Teams. The wave is Done when the whole initial
-surface group is adopted, not before.
+Home (#228, merged 7 September 2026; see Home below). Sessions is adopted
+in a PR under review (see Sessions below). Not yet adopted from the initial
+surface group: the admin screens beyond Users and Teams. The wave is Done
+when the whole initial surface group is adopted, not before.
 
 #### Registered Players: complete
 
@@ -884,6 +883,89 @@ has been run over either home, so what is proved about announcement is
 structural, as on every adopted screen; the `1 activities` pluralisation on
 a template card is wording and stays; and the shared `DrillCard` still
 carries its own two inline declarations, which are VISUAL-01's file.
+
+#### Sessions: adopted, under review
+
+The club calendar now uses the shared system. Part 4 names Sessions at all
+seven widths and in every capability variant it renders, and VISUAL-01
+checked it to prove the chips and the page head; this slice adopts it in
+full and covers its state matrix: normal, loading, error, the empty
+schedule both ways (a club with none, and a club whose sessions are all
+past), the ended Badge on a listed card, a session being driven, long
+strings at 360, the parent with no team, the parent on one team with the My
+team and All club chips, the read only member, narrow phone, tablet and
+desktop, both themes.
+
+What the slice adopted: `PageHeader` for the heading with New session in
+its action slot, `Button` for the eight hand written class strings and
+`IconButton` for the two icon only controls (named by `aria-label`, never
+`title`, which does not survive touch), `Card` for each session, `Badge` for
+the ended state (sharing `ENDED_TODAY_LABEL` with Home's week list, so the
+one fact has one look on both screens), a labelled `SelectField` for the
+team filter (a real `<label>`, read and not shown), and the type and
+spacing scales for every inline size and step, in a new `Sessions.css`. The
+route writes one inline style now, a plan segment's own minutes and phase,
+which is data rather than a size, and both files join both of the design
+system invariant's ownership lists. The card's heading is an `h2` under the
+page's `h1`, and the plan bar names its phases in words (`role="img"` with
+the phases and minutes) so they are never colour alone.
+
+What it deliberately did not do. No query, capability check, lifecycle
+rule, classifier call, filter default, parent scope, ownership rule or
+destination moved: `applyEventFilter`, `orderEventsForScope`,
+`matchesLifecycleScope`, `sessionVisibleToTeams` and the rest are called
+with exactly the arguments they were, New session and the planner links
+follow `sessions.create` as before, Start and Delete follow ownership or
+`sessions.manage` as before, and `src/routes/sessions.screens.test.tsx` pins
+all of it against the real screen. No wording changed. `SessionsContext` is
+untouched, so the error state still has no Retry, for the reason Home
+records: a Retry that cannot refetch the sessions read would claim more than
+it did, and widening the context is a data seam change for QUALITY-03.
+
+Three things worth recording:
+
+- **The grid overflowed the narrowest phone, and it was latent.** The card
+  grid's track minimum was a bare 330px, and the content column at 360 is
+  328px wide, so every session card sat two pixels past the viewport. It
+  is `minmax(min(330px, 100%), 1fr)` now, which is what the bare value was
+  meant to say.
+- **The team filter had no label.** It was a bare `<select>` at a 40px
+  height of its own. It is the shared `SelectField` now, 44px like every
+  other control, with a real `<label>` bound to it.
+- **Sessions draws no live cue.** A session being driven right now is an
+  Upcoming card offering Start or Watch, with nothing on the card saying it
+  is running; Home's hero says Live now. Adding a Badge would be a new
+  claim on the screen rather than a restyle of one it makes, so it is
+  recorded here rather than added under a presentation slice.
+- **A parent on every team is told to tap a chip they are not shown.** The
+  empty schedule's parent sentence is "Nothing scheduled for your team. Tap
+  All club to see the whole club." whenever the parent scope is the team,
+  and the My team and All club chips render only for a parent on SOME of
+  the club's teams; a parent on every team, which is the harness default,
+  meets the sentence with no chip to tap. Found by the state matrix. It is
+  copy that follows a scope rule rather than presentation, so it is
+  recorded for the next Sessions behaviour slice: the fix is to condition
+  the second sentence on the toggle being offered.
+
+The harness: Sessions shares Home's schedule fixtures and most of its state
+names, each proved by what Sessions renders, plus `sessionsloading`,
+`sessionserror` and `myteam` of its own; a Sessions block in `checks.mjs`
+measuring structure, hit areas, the labelled filter, the pressed and chosen
+filters with the list waited for rather than the clock, the shared ring, a
+destination from the keyboard, the delete dialog's focus contract, the
+Badge, the Note, both read states, both empties, long strings at 360 and the
+dark date pill; the state matrix and the driven Past view in `shoot.mjs`
+with a proof per state; and the parent only states and the Past view swept
+in `contrast.mjs` beside the coach's.
+
+Deferred, each with what would have to be true to fix it: no screen reader
+has been run over the calendar, so what is proved about announcement is
+structural, as on every adopted screen; `Empty` emits an `h3` under the
+page's `h1`, which is a shared primitive with thirty callers and not this
+slice's to move; and the Plan from Spond card that Sessions renders when a
+synced event is unplanned keeps its own inline sizes, because it is a Spond
+surface shared with the Planner and goes with that work rather than with a
+calendar slice.
 
 ### VISUAL-03 — Feature-area waves
 

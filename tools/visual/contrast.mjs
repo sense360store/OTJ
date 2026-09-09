@@ -208,7 +208,14 @@ const STATES_FOR = (screen) =>
                 // `live` where the eyebrow changes; the rest are the empty
                 // hero's own copy and the two read states.
                 ['default', 'homeloading', 'homeerror', 'nosessions', 'nothingscheduled', 'quietweek', 'endedtoday', 'live', 'nocontent', 'longnames']
-              : ['default']
+              : screen === 'sessions'
+                ? // The calendar as it opens, its two read states, both of
+                  // its empties, the ended Badge on a card, a card dated
+                  // today, and the long strings, where a title wraps onto a
+                  // second line. The parent only states are the separate run
+                  // below, for the reason Home's are.
+                  ['default', 'sessionsloading', 'sessionserror', 'nosessions', 'nothingscheduled', 'endedtoday', 'live', 'longnames']
+                : ['default']
 
 const failed = [], exempt = [], frozen = []
 const seen = new Set()
@@ -321,6 +328,61 @@ for (const screen of SCREENS) {
         await page.close()
        }
       }
+    }
+  }
+}
+
+/* ---- VISUAL-02: the Sessions parent's own states -----------------------
+   The state loop above runs Sessions' states against the coach. A parent
+   renders the calendar with a different header line, the info Note when
+   the club has not placed them, and the My team and All club chips when it
+   has placed them on one team; each is its own ground and is measured on
+   the parent's render rather than assumed from the coach's. The Past view
+   is a press and is measured too, on the coach, because Upcoming is what
+   the screen opens on by rule and the finished card is otherwise never on
+   any measured page. */
+for (const [caps, state, press] of [
+  ['parent', 'noteam', null],
+  ['parent', 'myteam', null],
+  ['parent', 'nosessions', null],
+  ['parent', 'endedtoday', null],
+  ['parent', 'longnames', null],
+  ['coach', 'default', 'Past'],
+]) {
+  for (const theme of ['light', 'dark']) {
+    for (const w of [390, 1280]) {
+      const page = await context.newPage()
+      await page.setViewportSize({ width: w, height: 1400 })
+      const q = new URLSearchParams({ screen: 'sessions', caps, theme })
+      if (state !== 'default') q.set('state', state)
+      await page.goto(`${BASE}/?${q}`, { waitUntil: 'domcontentloaded' })
+      await page.evaluate(() => document.fonts.ready)
+      await page.waitForTimeout(400)
+      if (press) {
+        const chip = page.getByRole('button', { name: press, exact: true })
+        if ((await chip.count()) === 0) {
+          failed.push(unreached('.chip', press, `sessions/${caps}/${press}/${theme}/${w}w`))
+        } else {
+          await chip.first().click()
+          // The list is waited for rather than the clock: the one finished
+          // night the fixture club holds is what the Past view shows.
+          const landed = await page
+            .locator('.session-card h2', { hasText: 'Gladiators last week' })
+            .waitFor({ timeout: 3000 })
+            .then(() => true, () => false)
+          if (!landed) failed.push(unreached('.session-card', 'Gladiators last week', `sessions/${caps}/${press}/${theme}/${w}w`))
+        }
+      }
+      const rows = await page.evaluate('(' + SWEEP + ')()')
+      for (const r of rows) {
+        if (r.ratio >= r.need) continue
+        const key = `${r.sel}|${r.fg}|${r.bg}|${r.size}|${r.weight}|${theme}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        const row = { ...r, where: `sessions/${caps}/${press ?? state}/${theme}/${w}w` }
+        ;(r.disabled ? exempt : r.frozen ? frozen : failed).push(row)
+      }
+      await page.close()
     }
   }
 }

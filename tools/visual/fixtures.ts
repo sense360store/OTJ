@@ -382,6 +382,24 @@ export type HarnessState =
   | 'novenues'
   | 'nolayouts'
   | 'noagegroups'
+  /* ---- Sessions (VISUAL-02) ---------------------------------------------
+     The club calendar reads the same sessions, teams and venues Home does,
+     so it shares Home's schedule fixtures and most of Home's state names
+     (`nosessions`, `nothingscheduled`, `endedtoday`, `live`, `longnames`,
+     `noteam`), each proved by what SESSIONS renders for it. The stub answers
+     them only while Home or Sessions is the mounted screen, so Players, the
+     admin screens and the Teams removal dialog keep reading exactly what
+     they always read. Two are its own, because "the sessions read has not
+     answered" is named for the screen it gates, and one is a parent scope
+     Home never shows. */
+  // The sessions read has not answered, and has failed: the page level gate.
+  | 'sessionsloading'
+  | 'sessionserror'
+  // A parent on ONE of the club's teams: the My team and All club chips,
+  // and a schedule narrowed to that team plus the club's own sessions. The
+  // default parent is on every team, which is the one shape that renders no
+  // toggle at all.
+  | 'myteam'
 
 export const harnessState = (params.get('state') ?? 'default') as HarnessState
 
@@ -611,10 +629,31 @@ const HOME_PAST: Session = session({
 // and the past night behind them.
 const HOME_DEFAULT: Session[] = [{ ...SESSIONS[0], venueId: HOME_VENUE.id }, ...SESSIONS.slice(1), HOME_PAST]
 
-const clock = (hoursAgo: number): string => {
+/* A session that STARTED a given number of hours ago, as the date and the
+   time TOGETHER. Reading the hour from a shifted instant while taking the
+   date from `inDays(0)` let the two describe different days: in the hour
+   after local midnight "one hour ago" is yesterday's clock time filed under
+   today's date, which is tonight rather than an hour ago, and the live
+   fixture then photographed a session that had not started. One instant,
+   read twice, so the pair cannot disagree. */
+const startedHoursAgo = (hoursAgo: number): { date: string; time: string } => {
   const d = new Date(Date.now() - hoursAgo * 3600000)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const two = (n: number) => String(n).padStart(2, '0')
+  return {
+    date: `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`,
+    time: `${two(d.getHours())}:${two(d.getMinutes())}`,
+  }
 }
+
+/* The live fixture's start, hoisted and PUBLISHED, so a harness proof can
+   assert the card's date against the same instant the fixture used instead
+   of recomputing "today". Recomputing is what broke the Sessions live proof
+   the moment this fixture was correctly allowed to fall on yesterday in the
+   hour after midnight: the Home shots passed and the Sessions ones failed,
+   in the same window, for the same reason. A proof that reads this cannot
+   drift from the fixture, whenever the run happens. */
+export const LIVE_SESSION_START = startedHoursAgo(1)
+;(globalThis as unknown as { __liveSessionDate?: string }).__liveSessionDate = LIVE_SESSION_START.date
 
 export const HOME_SESSIONS_FOR = (s: HarnessState): Session[] => {
   switch (s) {
@@ -654,8 +693,7 @@ export const HOME_SESSIONS_FOR = (s: HarnessState): Session[] => {
           id: 's-live',
           name: 'Titans Tuesday',
           coachId: 'coach-me',
-          date: inDays(0),
-          time: clock(1),
+          ...LIVE_SESSION_START,
           liveActivityIndex: 1,
           liveActivityStartedAt: new Date(Date.now() - 20 * 60000).toISOString(),
         }),

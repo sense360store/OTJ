@@ -1,0 +1,129 @@
+/* Sessions: the club calendar. Mobile first: one column of session cards on
+   a phone, an auto fill grid of them above. Every control's size is the
+   shared primitive's (Button, IconButton, Chip, the 44px hit area); what is
+   left here is composition, on the type and spacing scales, and nothing a
+   primitive could carry. */
+
+.sessions-filters {
+  margin-bottom: var(--space-16);
+}
+/* The team filter is a control in a row of chips, not a form field, so it
+   takes its own width rather than the field's full one. Composition, which
+   1.6 says belongs to the screen. A select's natural width is its longest
+   option, and a team name a club typed at length set the row 43px past a
+   360 viewport, so both the field and its control are capped at the row:
+   the native control ellipsises the option text inside it. Measured in the
+   browser under the long team names. */
+.sessions-filters .sessions-team {
+  min-width: 0;
+  max-width: 100%;
+}
+.sessions-filters .sessions-team select {
+  width: auto;
+  min-width: 160px;
+  max-width: 100%;
+}
+
+/* min(330px, 100%) rather than 330px alone: a grid track's minimum is a hard
+   floor, and at 360 the content column is 328px wide, so the bare value set
+   the track two pixels past the phone. Measured in the browser. */
+.sessions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr));
+  gap: var(--space-16);
+}
+
+.session-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+}
+.sc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+.sc-title {
+  flex: 1;
+  min-width: 0;
+}
+.sc-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  margin-bottom: var(--space-4);
+}
+/* The date is the one pill that reads as the card's key, so it takes the
+   royal word on a royal tint. --royal clears the text floor on the card in
+   both themes (asserted in the design system invariant), and the tint is
+   ten per cent of it, which contrast.mjs measures as rendered. */
+.session-card .sc-date {
+  color: var(--royal);
+  background: color-mix(in srgb, var(--royal) 10%, transparent);
+}
+/* A session name is whatever a coach typed, so it and the focus line break
+   anywhere rather than pushing the card wide. */
+.session-card h2 {
+  font-size: var(--text-lg);
+  font-weight: 800;
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+.sc-focus {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-2);
+  font-weight: 700;
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  overflow-wrap: anywhere;
+}
+/* The age group disc: the shared avatar shape on the page's second ground,
+   with a royal word, which is the one brand foreground that reads as text. */
+.session-card .sc-age {
+  flex: 0 0 auto;
+  background: var(--bg-2);
+  color: var(--royal);
+  font-size: var(--text-sm);
+}
+.sc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+.sc-meta .pill {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* The plan at a glance: one segment per activity, sized by its minutes and
+   painted with its phase. The bar names the phases in words for a reader
+   who cannot see its colours (see the aria-label in the route). */
+.sc-timeline {
+  display: flex;
+  gap: var(--space-2);
+  height: 8px;
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+}
+.sc-timeline > span {
+  display: block;
+  min-width: 0;
+}
+/* Two rows of actions. A button takes an equal share of its row, which is
+   composition; the icon buttons keep their own square. */
+.sc-acts {
+  display: flex;
+  gap: var(--space-8);
+}
+.sc-acts .btn {
+  flex: 1;
+  min-width: 0;
+}
+.sc-acts .icon-btn {
+  flex: 0 0 auto;
+}
+.sc-spacer {
+  flex: 1;
+}
