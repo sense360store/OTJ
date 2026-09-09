@@ -629,9 +629,20 @@ const HOME_PAST: Session = session({
 // and the past night behind them.
 const HOME_DEFAULT: Session[] = [{ ...SESSIONS[0], venueId: HOME_VENUE.id }, ...SESSIONS.slice(1), HOME_PAST]
 
-const clock = (hoursAgo: number): string => {
+/* A session that STARTED a given number of hours ago, as the date and the
+   time TOGETHER. Reading the hour from a shifted instant while taking the
+   date from `inDays(0)` let the two describe different days: in the hour
+   after local midnight "one hour ago" is yesterday's clock time filed under
+   today's date, which is tonight rather than an hour ago, and the live
+   fixture then photographed a session that had not started. One instant,
+   read twice, so the pair cannot disagree. */
+const startedHoursAgo = (hoursAgo: number): { date: string; time: string } => {
   const d = new Date(Date.now() - hoursAgo * 3600000)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const two = (n: number) => String(n).padStart(2, '0')
+  return {
+    date: `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`,
+    time: `${two(d.getHours())}:${two(d.getMinutes())}`,
+  }
 }
 
 export const HOME_SESSIONS_FOR = (s: HarnessState): Session[] => {
@@ -672,8 +683,7 @@ export const HOME_SESSIONS_FOR = (s: HarnessState): Session[] => {
           id: 's-live',
           name: 'Titans Tuesday',
           coachId: 'coach-me',
-          date: inDays(0),
-          time: clock(1),
+          ...startedHoursAgo(1),
           liveActivityIndex: 1,
           liveActivityStartedAt: new Date(Date.now() - 20 * 60000).toISOString(),
         }),
