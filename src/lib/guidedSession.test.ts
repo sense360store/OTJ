@@ -26,6 +26,7 @@ import {
   initialGuideState,
   initialGuideStep,
   guideAdvance,
+  guideContinue,
   guideRetreat,
   isGuidedStep,
   MAX_TARGET_MINUTES,
@@ -42,6 +43,8 @@ import {
   shapeStationCount,
   stepProgressLabel,
   suggestedSessionName,
+  targetMinutesFieldValue,
+  targetMinutesOnBlur,
   type SessionShape,
 } from './guidedSession'
 import { blankSession, NEW_SESSION_NAME, sessionMinutes } from './data'
@@ -170,6 +173,55 @@ describe('the target length', () => {
 
   it('answers the default rather than NaN for a cleared field', () => {
     expect(clampTargetMinutes(Number.NaN)).toBe(DEFAULT_TARGET_MINUTES)
+  })
+})
+
+describe('Continue never moves past a step that still needs an answer', () => {
+  const at = { step: 'focus' as const, targetMinutes: 60, shape: null, nameTouched: false }
+
+  it('advances when the step is answered', () => {
+    expect(guideContinue(at, null).step).toBe('shape')
+  })
+
+  it('changes NOTHING at all when it is not', () => {
+    // The same object back, so there is no path where a refusal moves the
+    // step, and no path where it quietly edits something else instead.
+    expect(guideContinue(at, GUIDE_PROBLEM_FOCUS)).toBe(at)
+  })
+
+  it('still refuses on the last step, where there is nowhere to go', () => {
+    const last = { ...at, step: 'activities' as const }
+    expect(guideContinue(last, null)).toEqual(last)
+    expect(guideContinue(last, GUIDE_PROBLEM_FOCUS)).toBe(last)
+  })
+})
+
+describe('typing a length is not committing one', () => {
+  it('shows an empty box for a cleared field rather than a zero to delete', () => {
+    expect(targetMinutesFieldValue(0)).toBe('')
+    expect(targetMinutesFieldValue(75)).toBe(75)
+  })
+
+  it('lets a coach reach 75 by typing a 7 first', () => {
+    // The defect this replaced: clamping every keystroke turned the 7
+    // into 15 before the 5 could be typed, so 75 was unreachable.
+    expect(targetMinutesFieldValue(7)).toBe(7)
+    expect(targetMinutesOnBlur(75)).toBe(75)
+  })
+
+  it('settles a half typed value to the nearest allowed one when they leave', () => {
+    expect(targetMinutesOnBlur(7)).toBe(MIN_TARGET_MINUTES)
+    expect(targetMinutesOnBlur(9999)).toBe(MAX_TARGET_MINUTES)
+  })
+
+  it('gives a cleared field the default back rather than the floor', () => {
+    expect(targetMinutesOnBlur(0)).toBe(DEFAULT_TARGET_MINUTES)
+    expect(targetMinutesOnBlur(Number.NaN)).toBe(DEFAULT_TARGET_MINUTES)
+  })
+
+  it('plans from a half typed value as if it were allowed, so nothing shows nonsense', () => {
+    // Every reader clamps, so a plan built mid keystroke is still valid.
+    expect(shapePlanMinutes(sessionShapePlan('stations-4', 7))).toBe(MIN_TARGET_MINUTES)
   })
 })
 
@@ -433,6 +485,19 @@ describe('a step says what it still needs, and discards nothing saying it', () =
   it('asks for a shape until one is chosen', () => {
     expect(guideStepProblem('shape', session(), state)).toBe(GUIDE_PROBLEM_SHAPE)
     expect(guideStepProblem('shape', session(), { shape: 'simple' })).toBeNull()
+  })
+
+  it('stops asking once the coach has a plan a shape could not start', () => {
+    // A starting shape starts an EMPTY plan. Blocking Continue over a
+    // choice that would change nothing is a dead end, so the question
+    // goes with the control that answers it.
+    const built = session({ activities: [{ phase: 'Skill', drillId: 'd-1', duration: 10 }] })
+    expect(guideStepProblem('shape', built, state)).toBeNull()
+  })
+
+  it('still asks over a plan that is only placeholders, which a shape can rewrite', () => {
+    const placeholders = session({ activities: applySessionShape([], 'simple', 60).activities })
+    expect(guideStepProblem('shape', placeholders, state)).toBe(GUIDE_PROBLEM_SHAPE)
   })
 
   it('asks nothing on the composing step, which finishes with Save rather than Continue', () => {

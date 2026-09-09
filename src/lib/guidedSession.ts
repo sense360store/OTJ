@@ -119,7 +119,7 @@ export const GUIDED_STEP_HEADINGS: Record<GuidedStep, string> = {
 }
 
 export const GUIDED_STEP_HINTS: Record<GuidedStep, string> = {
-  basics: 'Prefilled from what the club already knows. Change anything that is wrong.',
+  basics: 'What OTJ knows is filled in already. Check the date and change anything that is wrong.',
   focus: 'Pick one, or type your own. It guides the plan and never locks it.',
   shape: 'A starting structure, not a rule. You can change every activity next.',
   activities: 'Add drills, reorder them and set the minutes. Nothing is saved until you press Save session.',
@@ -160,6 +160,10 @@ export function stepProgressLabel(step: GuidedStep): string {
 // borrow that hook's "only when focus was lost" guard.
 export const GUIDED_STEP_HEADING_ID = 'guided-step-heading'
 
+// The refusal beside Continue, so the control can POINT at the sentence
+// that accounts for it rather than the sentence merely sitting near it.
+export const GUIDE_PROBLEM_ID = 'guided-step-problem'
+
 // ---- The coaching focus ---------------------------------------------
 //
 // NO NEW VOCABULARY, AND NO NEW TABLE. The chips are the FA player
@@ -176,7 +180,10 @@ export const GUIDED_STEP_HEADING_ID = 'guided-step-heading'
 // or starting a second list beside it. Both are worse than a text field
 // that already accepts them, so COACH-14A ships neither.
 export const GUIDED_FOCUS_GROUP_LABEL = 'Common focuses'
-export const GUIDED_FOCUS_OWN_LABEL = 'Or type your own'
+// Named for what it takes, not only for what it is instead of: a screen
+// reader announces the label alone, and "Or type your own" answers
+// nothing on its own.
+export const GUIDED_FOCUS_OWN_LABEL = 'Or type your own focus'
 
 export const guidedFocusOptions = (): readonly string[] => FA_PLAYER_SKILLS
 
@@ -226,6 +233,26 @@ export const TARGET_MINUTE_PRESETS: readonly number[] = [45, 60, 75, 90]
 export function clampTargetMinutes(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_TARGET_MINUTES
   return Math.min(MAX_TARGET_MINUTES, Math.max(MIN_TARGET_MINUTES, Math.round(value)))
+}
+
+// TYPING IS NOT COMMITTING, and clamping every keystroke is why that
+// matters. A coach reaching for 75 types a 7 first, and a field that
+// clamped as they typed turned it into 15 before they could reach the 5;
+// the number they wanted was unreachable and the field could not be
+// cleared. So the state holds what they typed, every reader clamps, and
+// the value settles when they leave the field.
+//
+// Zero is how a CLEARED field is carried, which is why it is not simply
+// clamped up: a coach who empties the box and leaves wants the default
+// back, not the floor.
+export function targetMinutesOnBlur(typed: number): number {
+  return typed > 0 ? clampTargetMinutes(typed) : DEFAULT_TARGET_MINUTES
+}
+
+// What the field shows while they type. An empty box rather than a zero
+// they would have to delete before typing anything.
+export function targetMinutesFieldValue(typed: number): number | '' {
+  return typed > 0 ? typed : ''
 }
 
 // One slice of a shape: what it is called on the preview, what it
@@ -309,8 +336,11 @@ export type ShapeApplication =
   | { kind: 'applied'; activities: Activity[] }
   | { kind: 'kept'; activities: Activity[] }
 
+// A starting shape starts an EMPTY plan. Once a coach has chosen a drill
+// there is nothing for it to start, so the choice goes inert and says so,
+// rather than staying pressable and doing nothing.
 export const SHAPE_KEPT_NOTE =
-  'This plan already has activities, so they are kept as they are. Change them on the next step.'
+  'This plan already has activities, so a starting shape has nothing to add. Change them on the next step.'
 
 export function applySessionShape(
   activities: readonly Activity[],
@@ -367,6 +397,13 @@ export function suggestedSessionName(input: {
 
 // Whether a name was written by somebody, so the suggestion must not
 // overwrite it. The blank default is the one name nobody chose.
+//
+// The FULL PLANNER reads this too, for the other half of the same
+// problem. Its name field starts on that default as real content rather
+// than as a placeholder, so a coach who taps it and types gets
+// "New SessionSmoke Test": production did exactly that. Both name fields
+// select the default when it is focused, so typing replaces it, and
+// neither touches a name somebody wrote.
 export function sessionNameIsUntouched(name: string): boolean {
   const trimmed = name.trim()
   return trimmed === '' || trimmed === NEW_SESSION_NAME
@@ -422,6 +459,17 @@ export function guideRetreat(state: GuideState): GuideState {
   return to === null ? state : { ...state, step: to }
 }
 
+// What a press on Continue does, INCLUDING the guard. It is one function
+// rather than an early return in the handler because an early return is
+// one line for somebody to drop: removing it advances the coach past a
+// step that still needs an answer, and every test still passed. Written
+// this way, a refusal returns the state it was given, so "Continue never
+// moves past an unanswered question" is a property of a tested function
+// rather than of a handler's shape.
+export function guideContinue(state: GuideState, problem: string | null): GuideState {
+  return problem === null ? guideAdvance(state) : state
+}
+
 // ---- What a step needs before Continue ------------------------------
 //
 // A refusal NEVER discards anything: it is a sentence beside the
@@ -440,7 +488,7 @@ export const GUIDE_PROBLEM_SHAPE = 'Choose a session shape.'
 
 export function guideStepProblem(
   step: GuidedStep,
-  session: Pick<Session, 'name' | 'date' | 'focus'>,
+  session: Pick<Session, 'name' | 'date' | 'focus' | 'activities'>,
   state: Pick<GuideState, 'shape'>,
 ): string | null {
   if (step === 'basics') {
@@ -449,7 +497,13 @@ export function guideStepProblem(
     return null
   }
   if (step === 'focus') return session.focus.trim() === '' ? GUIDE_PROBLEM_FOCUS : null
-  if (step === 'shape') return state.shape === null ? GUIDE_PROBLEM_SHAPE : null
+  // A shape is asked for only where one could be applied. A coach who has
+  // already chosen drills is past the question, and refusing to let them
+  // continue over a choice that would change nothing is a dead end.
+  if (step === 'shape') {
+    if (!canApplySessionShape(session.activities)) return null
+    return state.shape === null ? GUIDE_PROBLEM_SHAPE : null
+  }
   return null
 }
 

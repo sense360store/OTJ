@@ -13,6 +13,9 @@ import { useNav } from '../hooks/useNav'
 import { useAuth } from '../hooks/useAuth'
 import { useSessions } from '../context/SessionsContext'
 import { useClubAgeGroups, useTeams, useUpsertSession, useVenues } from '../lib/queries'
+// The one local calendar date derivation, shared with the two hand
+// create paths. This screen wrote its own until COACH-14A gave them one.
+import { todayIso } from '../lib/localDate'
 import { LEGACY_DEFAULT_AGE_GROUP, ageGroupOptions, defaultAgeGroup } from '../lib/ageGroups'
 import type { Venue } from '../lib/venues'
 import { logSessionWriteError, stableCreateId } from '../lib/sessionSubmit'
@@ -44,13 +47,6 @@ function isoAddDays(iso: string, days: number): string {
 
 function weekdayOf(iso: string): number {
   return new Date(iso + 'T12:00:00').getDay()
-}
-
-function todayIso(): string {
-  const d = new Date()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day}`
 }
 
 // The first date on or after start that falls on the chosen weekday.

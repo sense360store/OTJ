@@ -48,13 +48,14 @@ import {
   GUIDED_EXIT_NOTE,
   GUIDED_FOCUS_GROUP_LABEL,
   GUIDED_FOCUS_OWN_LABEL,
+  GUIDE_PROBLEM_ID,
   GUIDED_STEP_HEADING_ID,
   GUIDED_STEP_HEADINGS,
   GUIDED_STEP_HINTS,
   GUIDED_STEP_LABELS,
   GUIDED_STEPS,
   guidedFocusOptions,
-  guideAdvance,
+  guideContinue,
   guideRetreat,
   guideStepProblem,
   initialGuideState,
@@ -65,6 +66,7 @@ import {
   SESSION_SHAPE_LABELS,
   SESSION_SHAPE_NOTES,
   SESSION_SHAPES,
+  sessionNameIsUntouched,
   sessionShapePlan,
   SHAPE_KEPT_NOTE,
   shapePlanMinutes,
@@ -72,6 +74,8 @@ import {
   stepProgressLabel,
   suggestedSessionName,
   TARGET_MINUTE_PRESETS,
+  targetMinutesFieldValue,
+  targetMinutesOnBlur,
   type GuidedField,
   type GuideState,
   type SessionShape,
@@ -244,23 +248,36 @@ export function GuidedPlanner({
     setState(guideRetreat)
   }
   const onContinue = () => {
-    if (problem !== null) {
-      setRefused(true)
-      return
-    }
-    setRefused(false)
-    setState(guideAdvance)
+    setRefused(problem !== null)
+    setState((s) => guideContinue(s, problem))
   }
-  const setTarget = (minutes: number) => setState((s) => ({ ...s, targetMinutes: clampTargetMinutes(minutes) }))
+  // Typing holds what was typed; every reader clamps. Nothing is applied
+  // to the plan from a keystroke.
+  const typeTarget = (minutes: number) => setState((s) => ({ ...s, targetMinutes: minutes }))
+  // Committing settles the value AND re-divides the plan, when the plan is
+  // still the shape's to write. Without that second half a coach who went
+  // back and changed 60 to 75 got a shape step promising 75 over a plan
+  // that still totalled 60, and nothing on the screen said which was true.
+  const applyShape = (shape: SessionShape, minutes: number) => {
+    const applied = applySessionShape(session.activities, shape, minutes)
+    if (applied.kind === 'applied') onActivities(applied.activities)
+  }
+  const commitTarget = (typed: number) => {
+    const minutes = targetMinutesOnBlur(typed)
+    setState((s) => ({ ...s, targetMinutes: minutes }))
+    if (state.shape) applyShape(state.shape, minutes)
+  }
   const chooseShape = (shape: SessionShape) => {
     setRefused(false)
     setState((s) => ({ ...s, shape }))
-    const applied = applySessionShape(session.activities, shape, state.targetMinutes)
-    if (applied.kind === 'applied') onActivities(applied.activities)
+    applyShape(shape, state.targetMinutes)
   }
 
   return (
-    <div className="guide">
+    // aria-busy while a write settles, the same mark PlannerWorkspace puts
+    // on the full planner: the guided surface freezes the same controls
+    // for the same reason, so it owes assistive technology the same notice.
+    <div className="guide" aria-busy={busy}>
       <GuidedProgress step={step} />
 
       <Card className="guide-card" padded>
@@ -284,7 +301,8 @@ export function GuidedPlanner({
             }}
             onToggleTeam={onToggleTeam}
             onAllTeams={onAllTeams}
-            onTarget={setTarget}
+            onType={typeTarget}
+            onCommit={commitTarget}
           />
         )}
         {step === 'focus' && <GuidedFocusStep focus={session.focus} busy={busy} onFocus={(v) => onField('focus', v)} />}
@@ -293,6 +311,7 @@ export function GuidedPlanner({
             activities={session.activities}
             shape={state.shape}
             targetMinutes={state.targetMinutes}
+            totalMinutes={totalMinutes}
             busy={busy}
             onShape={chooseShape}
           />
@@ -302,7 +321,7 @@ export function GuidedPlanner({
         )}
 
         {refused && problem !== null && (
-          <Note tone="warning" role="alert" className="guide-problem">
+          <Note tone="warning" role="alert" id={GUIDE_PROBLEM_ID} className="guide-problem">
             {problem}
           </Note>
         )}
@@ -315,7 +334,12 @@ export function GuidedPlanner({
           </Button>
         )}
         {forward && (
-          <Button variant="primary" disabled={busy} onClick={onContinue}>
+          <Button
+            variant="primary"
+            disabled={busy}
+            aria-describedby={refused && problem !== null ? GUIDE_PROBLEM_ID : undefined}
+            onClick={onContinue}
+          >
             Continue
           </Button>
         )}
@@ -348,7 +372,8 @@ export function GuidedBasicsStep({
   onName,
   onToggleTeam,
   onAllTeams,
-  onTarget,
+  onType,
+  onCommit,
 }: {
   session: Session
   teams: Team[]
@@ -359,7 +384,10 @@ export function GuidedBasicsStep({
   onName: (value: string) => void
   onToggleTeam: (teamId: string) => void
   onAllTeams: () => void
-  onTarget: (minutes: number) => void
+  // While the coach types: what they typed, unclamped.
+  onType: (minutes: number) => void
+  // When they settle on it: a preset press, or leaving the field.
+  onCommit: (minutes: number) => void
 }) {
   return (
     <div className="guide-body">
@@ -368,6 +396,11 @@ export function GuidedBasicsStep({
         value={session.name}
         disabled={busy}
         hint="Suggested from the teams and age group. Change it to anything."
+        onFocus={(e) => {
+          // The suggestion is content rather than a placeholder, so a
+          // coach who taps in and types would otherwise append to it.
+          if (sessionNameIsUntouched(e.target.value)) e.target.select()
+        }}
         onChange={(e) => onName(e.target.value)}
       />
       <div className="guide-pair">
@@ -410,7 +443,7 @@ export function GuidedBasicsStep({
         </span>
         <div className="row wrap guide-mins" role="group" aria-labelledby="guide-length-label">
           {TARGET_MINUTE_PRESETS.map((m) => (
-            <Chip key={m} on={targetMinutes === m} disabled={busy} onClick={() => onTarget(m)}>
+            <Chip key={m} on={targetMinutes === m} disabled={busy} onClick={() => onCommit(m)}>
               {m} min
             </Chip>
           ))}
@@ -422,9 +455,11 @@ export function GuidedBasicsStep({
         className="guide-mins-field"
         min={MIN_TARGET_MINUTES}
         max={MAX_TARGET_MINUTES}
-        value={targetMinutes}
+        value={targetMinutesFieldValue(targetMinutes)}
         disabled={busy}
-        onChange={(e) => onTarget(parseInt(e.target.value) || 0)}
+        hint={`Between ${MIN_TARGET_MINUTES} and ${MAX_TARGET_MINUTES} minutes.`}
+        onChange={(e) => onType(parseInt(e.target.value) || 0)}
+        onBlur={(e) => onCommit(parseInt(e.target.value) || 0)}
       />
     </div>
   )
@@ -458,21 +493,33 @@ export function GuidedShapeStep({
   activities,
   shape,
   targetMinutes,
+  totalMinutes,
   busy,
   onShape,
 }: {
   activities: Activity[]
   shape: SessionShape | null
   targetMinutes: number
+  // What the plan actually totals now, through the shared seam.
+  totalMinutes: number
   busy: boolean
   onShape: (shape: SessionShape) => void
 }) {
-  const plan = shape ? sessionShapePlan(shape, targetMinutes) : null
+  // A STARTING SHAPE STARTS AN EMPTY PLAN. Once the coach has chosen a
+  // drill there is nothing left for it to start, so the choice goes inert
+  // and the step describes THE PLAN rather than a division that would
+  // never be written. The first version left the buttons live and drew
+  // the proposed slices over a plan that did not have them, which is a
+  // screen stating something untrue about the session.
+  const startable = canApplySessionShape(activities)
+  const plan = startable && shape ? sessionShapePlan(shape, targetMinutes) : null
   return (
     <div className="guide-body">
-      <div className="guide-target">
-        <span className="guide-target-big">{plan ? shapePlanMinutes(plan) : targetMinutes}</span>
-        <span className="guide-target-unit">min planned</span>
+      <div className="guide-target" role="status">
+        <span className="guide-target-big">
+          {plan ? shapePlanMinutes(plan) : startable ? clampTargetMinutes(targetMinutes) : totalMinutes}
+        </span>
+        <span className="guide-target-unit">{startable ? 'min planned' : 'min in this plan'}</span>
       </div>
       <div className="guide-shapes" role="group" aria-label="Session shape">
         {SESSION_SHAPES.map((s) => (
@@ -481,10 +528,13 @@ export function GuidedShapeStep({
             type="button"
             className={'guide-shape' + (shape === s ? ' on' : '')}
             aria-pressed={shape === s}
-            disabled={busy}
+            disabled={busy || !startable}
             onClick={() => onShape(s)}
           >
-            <span className="guide-shape-name">{SESSION_SHAPE_LABELS[s]}</span>
+            <span className="guide-shape-name">
+              {shape === s && <Icon.check />}
+              {SESSION_SHAPE_LABELS[s]}
+            </span>
             <span className="guide-shape-note">{SESSION_SHAPE_NOTES[s]}</span>
           </button>
         ))}
@@ -499,7 +549,7 @@ export function GuidedShapeStep({
           ))}
         </ol>
       )}
-      {!canApplySessionShape(activities) && (
+      {!startable && (
         <Note tone="info" className="guide-kept">
           {SHAPE_KEPT_NOTE}
         </Note>

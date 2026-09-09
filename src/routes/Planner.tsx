@@ -51,6 +51,7 @@ import {
   PLANNER_GUIDE_MODE,
   PLANNER_MODE_PARAM,
   plannerModeFor,
+  sessionNameIsUntouched,
   type PlannerMode,
 } from '../lib/guidedSession'
 import {
@@ -359,7 +360,19 @@ export function SessionFieldsView({
       </div>
       <div className="field">
         <label>Session name</label>
-        <input value={session.name} disabled={frozen} onChange={(e) => onField('name', e.target.value)} />
+        {/* The default name is real content rather than a placeholder, so
+            tapping in and typing used to append to it: production made a
+            session called "New SessionSmoke Test". Focusing selects it
+            when it is still the default, so typing replaces it; a name
+            somebody wrote is never selected out from under them. */}
+        <input
+          value={session.name}
+          disabled={frozen}
+          onFocus={(e) => {
+            if (sessionNameIsUntouched(e.target.value)) e.target.select()
+          }}
+          onChange={(e) => onField('name', e.target.value)}
+        />
       </div>
       <div className="row" style={{ gap: 10 }}>
         <div className="field" style={{ flex: 1 }}>
@@ -1011,7 +1024,12 @@ function PlannerEditor({
           onToggleTeam={toggleTeam}
           onAllTeams={allTeams}
           onActivities={(activities) => setSession((s) => ({ ...s, activities }))}
-          onExit={() => setMode('full')}
+          onExit={() => {
+            // They have just said which surface they want, so do not ask
+            // again the moment they land on it.
+            setChooserOpen(false)
+            setMode('full')
+          }}
           composer={composer}
           actions={actionsCard}
         />

@@ -55,7 +55,11 @@ export function CoveredTeamsField({
   return (
     <div className="field">
       <label>Teams</label>
-      <div className="row wrap" style={{ gap: 7 }}>
+      {/* The chips are a group of toggles rather than one control, so the
+          label above them names nothing on its own; the group carries the
+          name so assistive technology reads the chips as the answer to
+          "Teams" rather than as four loose buttons. */}
+      <div className="row wrap" role="group" aria-label="Teams" style={{ gap: 7 }}>
         <button
           type="button"
           className={'chip' + (all ? ' on' : '')}

@@ -324,10 +324,52 @@ describe('the guide says where it is and how to finish', () => {
     expect(src).toContain('state.nameTouched')
   })
 
+  it('holds what the coach types rather than clamping every keystroke', () => {
+    // THE DEFECT THIS REPLACED. Clamping in the change handler turned the
+    // 7 of 75 into 15 before the 5 could be typed, so most lengths were
+    // unreachable and the field could not be cleared. The two handlers
+    // are separate for that reason: one carries what was typed, the other
+    // settles it. The pure halves are proved in guidedSession.test.ts;
+    // this is what notices the wiring being put back.
+    const src = read(VIEW)
+    const typing = src.split('\n').find((l) => l.includes('const typeTarget ='))
+    expect(typing).toBeTruthy()
+    expect(typing).not.toContain('clamp')
+    expect(src).toContain('targetMinutesOnBlur(typed)')
+    expect(src).toMatch(/onChange=\{\(e\) => onType\(/)
+    expect(src).toMatch(/onBlur=\{\(e\) => onCommit\(/)
+  })
+
+  it('re-divides the plan when the length is committed, not only when a shape is picked', () => {
+    // A coach who went back and changed 60 to 75 got a shape step
+    // promising 75 over a plan that still totalled 60, with nothing on
+    // screen saying which was true.
+    const src = read(VIEW)
+    const at = src.indexOf('const commitTarget')
+    expect(at).toBeGreaterThan(-1)
+    const commit = src.slice(at, src.indexOf('\n  }', at))
+    expect(commit).toContain('applyShape(state.shape, minutes)')
+  })
+
+  it('lets a shape start only an empty plan, and says so rather than pressing to no effect', () => {
+    const src = read(VIEW)
+    expect(src).toContain('const startable = canApplySessionShape(activities)')
+    expect(src).toContain('disabled={busy || !startable}')
+    // And the step describes the plan it has rather than one it will not get.
+    expect(src).toContain('SHAPE_KEPT_NOTE')
+    expect(src).toMatch(/startable \? 'min planned' : 'min in this plan'/)
+  })
+
   it('refuses without discarding, and only after the coach has pressed Continue', () => {
     const src = read(VIEW)
     expect(src).toContain('guideStepProblem(')
-    expect(src).toContain('setRefused(true)')
+    // The refusal tracks the problem rather than being latched on, and
+    // the ADVANCE goes through guideContinue, which owns the guard: an
+    // early return in the handler was one line for somebody to drop, and
+    // dropping it advanced a coach past their own unanswered question
+    // with every test still green.
+    expect(src).toContain('setRefused(problem !== null)')
+    expect(src).toContain('guideContinue(s, problem)')
     // The refusal is a sentence beside the control, announced.
     expect(src).toMatch(/role="alert"/)
   })

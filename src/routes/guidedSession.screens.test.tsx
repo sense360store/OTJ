@@ -24,6 +24,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { blankSession } from '../lib/data'
+import { todayIso } from '../lib/localDate'
 import type { Drill, Session } from '../lib/data'
 import { CUSTOM_ACTIVITY_TITLE } from '../lib/planDrillAuthoring'
 import { FA_PLAYER_SKILLS } from '../lib/fa'
@@ -290,7 +291,7 @@ describe('the draft the guide starts from', () => {
     // The blank draft's own values reach the guided controls, and the
     // club's teams reach the same chips the planner uses.
     const out = planner(GUIDE_AT)
-    expect(out).toContain('value="2026-06-16"')
+    expect(out).toContain(`value="${todayIso()}"`)
     expect(out).toContain('value="17:30"')
     expect(out).toContain('>Titans</button>')
     expect(out).toContain('>Trojans</button>')
@@ -319,7 +320,8 @@ describe('the draft the guide starts from', () => {
         onName={() => {}}
         onToggleTeam={() => {}}
         onAllTeams={() => {}}
-        onTarget={() => {}}
+        onType={() => {}}
+        onCommit={() => {}}
       />,
     )
     expect(out).toContain('value="Club training"')
@@ -331,6 +333,28 @@ describe('the draft the guide starts from', () => {
     expect(out).toContain('aria-pressed="true">60 min</button>')
     expect(out).toContain('aria-pressed="false">90 min</button>')
     expect(out).toContain('type="number" min="15" max="240" value="60"')
+  })
+
+  it('says what the length field will take, beside the field', () => {
+    expect(planner(GUIDE_AT)).toContain('Between 15 and 240 minutes.')
+  })
+
+  it('shows an empty length box rather than a zero the coach has to delete', () => {
+    const out = renderToStaticMarkup(
+      <GuidedBasicsStep
+        session={blankSession(ME)}
+        teams={TEAMS}
+        busy={false}
+        targetMinutes={0}
+        onField={() => {}}
+        onName={() => {}}
+        onToggleTeam={() => {}}
+        onAllTeams={() => {}}
+        onType={() => {}}
+        onCommit={() => {}}
+      />,
+    )
+    expect(out).toContain('type="number" min="15" max="240" value=""')
   })
 })
 
@@ -361,13 +385,22 @@ describe('the coaching focus step', () => {
 
   it('names the free text field, so it is not an unlabelled box', () => {
     expect(focusStep('')).toContain(GUIDED_FOCUS_OWN_LABEL)
+    expect(GUIDED_FOCUS_OWN_LABEL).toContain('focus')
   })
 })
 
 describe('the session shape step', () => {
   const shapeStep = (over: Partial<Parameters<typeof GuidedShapeStep>[0]> = {}) =>
     renderToStaticMarkup(
-      <GuidedShapeStep activities={[]} shape={null} targetMinutes={60} busy={false} onShape={() => {}} {...over} />,
+      <GuidedShapeStep
+        activities={[]}
+        shape={null}
+        targetMinutes={60}
+        totalMinutes={0}
+        busy={false}
+        onShape={() => {}}
+        {...over}
+      />,
     )
 
   it('offers three starting structures and no more', () => {
@@ -390,18 +423,59 @@ describe('the session shape step', () => {
     expect(out.match(/10 min/g)).toHaveLength(6)
   })
 
-  it('marks the chosen structure as pressed', () => {
+  it('marks the chosen structure as pressed, and with a glyph rather than a hue', () => {
     const out = shapeStep({ shape: 'stations-5' })
     expect(out.match(/aria-pressed="true"/g)).toHaveLength(1)
+    // One tick, on the chosen one. The dark theme's navy is a brighter
+    // blue than the unselected grey rather than a stronger one, so an
+    // edge colour alone would read as a difference without reading as a
+    // choice.
+    expect(out.match(/<svg/g) ?? []).toHaveLength(1)
+    const chosen = out.slice(out.indexOf('aria-pressed="true"'))
+    expect(chosen.slice(0, chosen.indexOf('</button>'))).toContain('<svg')
   })
 
-  it('says so when a plan the coach has built is kept rather than replaced', () => {
-    const out = shapeStep({ activities: [{ phase: 'Skill', drillId: 'd1', duration: 10 }] })
+  it('ties a refusal to the control that caused it', () => {
+    // Rendered through the real planner, because the association is the
+    // host's markup rather than the step's.
+    const out = planner(GUIDE_AT)
+    // Nothing is refused on arrival, so nothing points anywhere yet.
+    expect(out).not.toContain('aria-describedby="guided-step-problem"')
+    expect(out).not.toContain('role="alert"')
+  })
+
+  it('goes inert over a plan the coach has already built, and says why', () => {
+    // A starting shape starts an EMPTY plan. Leaving the buttons live
+    // over a plan with a drill in it meant a press that changed nothing,
+    // and a preview drawn over slices the session did not have.
+    const out = shapeStep({ activities: [{ phase: 'Skill', drillId: 'd1', duration: 10 }], totalMinutes: 34 })
     expect(out).toContain(SHAPE_KEPT_NOTE)
+    for (const b of buttons(out).filter((b) => b.tag.includes('guide-shape'))) {
+      expect(b.tag, b.label).toContain('disabled')
+    }
   })
 
-  it('says nothing of the sort over an empty plan', () => {
-    expect(shapeStep()).not.toContain(SHAPE_KEPT_NOTE)
+  it('describes THAT plan rather than a division it will not get', () => {
+    const out = shapeStep({ activities: [{ phase: 'Skill', drillId: 'd1', duration: 10 }], totalMinutes: 34 })
+    expect(out).toContain('>34</span>')
+    expect(out).toContain('min in this plan')
+    expect(out).not.toContain('min planned')
+    // And no slice list, because those slices are not what the session holds.
+    expect(out).not.toContain('guide-plan')
+  })
+
+  it('says nothing of the sort over an empty plan, and stays pressable', () => {
+    const out = shapeStep()
+    expect(out).not.toContain(SHAPE_KEPT_NOTE)
+    for (const b of buttons(out).filter((b) => b.tag.includes('guide-shape'))) {
+      expect(b.tag, b.label).not.toContain('disabled')
+    }
+  })
+
+  it('holds a half typed length to the allowed range in what it shows', () => {
+    // The field carries what the coach typed; every reader clamps, so the
+    // step never advertises seven minutes of training.
+    expect(shapeStep({ targetMinutes: 7 })).toContain('>15</span>')
   })
 })
 
@@ -431,6 +505,62 @@ describe('the composing step', () => {
     const out = activitiesStep(60, 6)
     expect(out).toContain('test-composer')
     expect(out).toContain('test-actions')
+  })
+})
+
+// ---- each control writes into its own field --------------------------
+
+describe('a guided control edits the field it is labelled with', () => {
+  it('renders each session value under its own label, so none is crossed', () => {
+    // Distinct values, so a control bound to the wrong field shows the
+    // wrong one. Reading the markup rather than the props is the point:
+    // a swap between date and time, or between name and focus, is
+    // invisible in a props check and obvious here.
+    const out = renderToStaticMarkup(
+      <GuidedBasicsStep
+        session={{ ...blankSession(ME), name: 'Thursday finishing', date: '2026-10-06', time: '18:45', ageGroup: 'U10s' }}
+        teams={TEAMS}
+        busy={false}
+        targetMinutes={75}
+        onField={() => {}}
+        onName={() => {}}
+        onToggleTeam={() => {}}
+        onAllTeams={() => {}}
+        onType={() => {}}
+        onCommit={() => {}}
+      />,
+    )
+    expect(out).toMatch(/Session name<\/label><input[^>]*value="Thursday finishing"/)
+    expect(out).toMatch(/Date<\/label><input[^>]*type="date"[^>]*value="2026-10-06"/)
+    expect(out).toMatch(/Time<\/label><input[^>]*type="time"[^>]*value="18:45"/)
+    expect(out).toContain('<option selected="">U10s</option>')
+    expect(out).toMatch(/Session length in minutes<\/label><input[^>]*value="75"/)
+  })
+
+  it('freezes every control while a write is in flight, exactly as the planner does', () => {
+    const out = renderToStaticMarkup(
+      <GuidedBasicsStep
+        session={blankSession(ME)}
+        teams={TEAMS}
+        busy
+        targetMinutes={60}
+        onField={() => {}}
+        onName={() => {}}
+        onToggleTeam={() => {}}
+        onAllTeams={() => {}}
+        onType={() => {}}
+        onCommit={() => {}}
+      />,
+    )
+    for (const m of out.matchAll(/<(input|select)\b[^>]*>/g)) expect(m[0], m[0]).toContain('disabled')
+    for (const b of buttons(out)) expect(b.tag, b.label).toContain('disabled')
+  })
+
+  it('marks the guided region busy while a write settles, as the planner region does', () => {
+    // The full planner's workspace carries aria-busy so assistive tech can
+    // defer the in-region label changes. The guided surface freezes the
+    // same controls and owes the same notice.
+    expect(planner(GUIDE_AT)).toContain('class="guide" aria-busy="false"')
   })
 })
 

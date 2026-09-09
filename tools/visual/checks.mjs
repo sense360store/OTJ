@@ -5049,6 +5049,58 @@ const focusReturned = async (page, d) => {
     return ok
   }
 
+  /* ---- pressing the choice actually opens the guide ---- */
+  {
+    const page = await open('planner', 390, { caps: 'author' })
+    if (!page.blank) {
+      const before = await page.evaluate(() => ({
+        chooser: document.querySelectorAll('.guide-entry').length,
+        planner: document.querySelectorAll('.planner').length,
+        guide: document.querySelectorAll('.guide-progress').length,
+      }))
+      check('a new session offers the choice ABOVE the planner rather than instead of it',
+        before.chooser === 1 && before.planner === 1 && before.guide === 0, JSON.stringify(before))
+      const opened = await press(page, '.guide-entry .guide-choice', 'Build session with guide')
+      const after = await page.evaluate(() => ({
+        guide: document.querySelectorAll('.guide-progress').length,
+        planner: document.querySelectorAll('.planner').length,
+        heading: document.querySelector('#guided-step-heading')?.textContent?.trim() ?? '',
+      }))
+      check('pressing Build session with guide opens the guide on its first question',
+        opened && after.guide === 1 && after.planner === 0 && after.heading.length > 0, JSON.stringify(after))
+      await page.close()
+    }
+  }
+
+  /* ---- Use full planner puts the choice away rather than re-asking ---- */
+  {
+    const page = await open('planner', 390, { caps: 'author' })
+    if (!page.blank) {
+      const dismissed = await press(page, '.guide-entry .guide-choice:nth-of-type(2)', 'Use full planner')
+      const after = await page.evaluate(() => ({
+        chooser: document.querySelectorAll('.guide-entry').length,
+        planner: document.querySelectorAll('.planner').length,
+      }))
+      check('Use full planner puts the choice away and leaves the form they are on',
+        dismissed && after.chooser === 0 && after.planner === 1, JSON.stringify(after))
+      await page.close()
+    }
+  }
+
+  /* ---- the progress list reads in full on a phone ---- */
+  {
+    const page = await open('planner', 360, { caps: 'author', at: 'guide' })
+    if (!page.blank) {
+      const clipped = await page.evaluate(() =>
+        [...document.querySelectorAll('.guide-step-label')]
+          .filter((el) => el.scrollWidth > el.clientWidth + 1)
+          .map((el) => `${el.textContent} ${el.scrollWidth}>${el.clientWidth}`),
+      )
+      check('no step label is clipped at 360', clipped.length === 0, clipped.join(' | '))
+      await page.close()
+    }
+  }
+
   /* ---- the guide opens, says where it is, and fills in what OTJ knows ---- */
   {
     const page = await open('planner', 390, { caps: 'author', at: 'guide' })
@@ -5085,6 +5137,36 @@ const focusReturned = async (page, d) => {
         return out
       })
       check('every guided control reaches a 44px hit area at 390', short.length === 0, short.join(' | '))
+      await page.close()
+    }
+  }
+
+  /* ---- the length field takes what a coach types ---- */
+  {
+    const page = await open('planner', 390, { caps: 'author', at: 'guide' })
+    if (!page.blank) {
+      // THE ONE THING NO STATIC RENDER CAN SEE. Clamping every keystroke
+      // turned the 7 of 75 into 15 before the 5 could be typed, so most
+      // lengths were unreachable; the pure halves and the wiring are
+      // pinned in the suites, and this is the only place the two are
+      // driven together against a real input.
+      const field = page.locator('.guide-mins-field input')
+      const wrote = await acted(field, 'the session length', 'typed into', (el) => el.fill('75'))
+      const typed = wrote ? await field.inputValue() : ''
+      check('the length field takes a two digit number as it is typed', typed === '75', typed || 'not typed')
+      if (wrote) {
+        await field.blur()
+        await page.waitForTimeout(150)
+        const settled = await field.inputValue()
+        check('and keeps it once the coach leaves the field', settled === '75', settled)
+        const cleared = await acted(field, 'the session length', 'typed into', (el) => el.fill(''))
+        if (cleared) {
+          await field.blur()
+          await page.waitForTimeout(150)
+          const back = await field.inputValue()
+          check('a cleared length settles back to the default rather than the floor', back === '60', back)
+        }
+      }
       await page.close()
     }
   }
@@ -5155,11 +5237,19 @@ const focusReturned = async (page, d) => {
           planner: document.querySelectorAll('.planner').length,
           name: document.querySelector('.planner-side .field input')?.value ?? '',
           rows: document.querySelectorAll('.act-card').length,
-          address: location.search,
+          guides: document.querySelectorAll('.guide').length,
+          steps: document.querySelectorAll('nav[aria-label="Session builder steps"]').length,
         }))
         check('switching to the full planner keeps the name and every activity',
           full.planner === 1 && full.rows === 6 && full.name.endsWith('training'), JSON.stringify(full))
-        check('and takes the guided mode back off the address', !full.address.includes('mode=guide'), full.address)
+        // WHAT THIS BLOCK CANNOT SEE. The harness mounts the app in a
+        // MemoryRouter, so `location.search` is the HARNESS address and
+        // never the router's: a check that the guided mode leaves the
+        // address would read a string that never carried it and pass for
+        // the wrong reason. It is pinned on the source instead, in
+        // src/lib/guidedSession.invariant.test.ts.
+        check('and the guided chrome is gone rather than merely hidden',
+          full.guides === 0 && full.steps === 0, JSON.stringify(full))
       }
       await page.close()
     }

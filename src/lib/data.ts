@@ -6,6 +6,7 @@
 // they are static and shared, not server data.
 import { activeActivityMinutes } from './activityStructure'
 import { LEGACY_DEFAULT_AGE_GROUP } from './ageGroups'
+import { todayIso } from './localDate'
 import type { ActivitySlot, StructuredActivity } from './activityStructure'
 
 export type CornerKey = 'technical' | 'physical' | 'social' | 'psychological'
@@ -612,7 +613,10 @@ export function blankSession(coachId: string): Session {
   return {
     id: crypto.randomUUID(),
     name: NEW_SESSION_NAME,
-    date: '2026-06-16',
+    // TODAY, in the club's local calendar. It was a fixed literal until a
+    // production smoke test in September created a session dated 16 June;
+    // ./localDate is the one derivation both hand create paths now use.
+    date: todayIso(),
     time: '17:30',
     ageGroup: LEGACY_DEFAULT_AGE_GROUP,
     // No venue until someone picks one from the club's list. A seeded name
