@@ -6,6 +6,7 @@
 // they are static and shared, not server data.
 import { activeActivityMinutes } from './activityStructure'
 import { LEGACY_DEFAULT_AGE_GROUP } from './ageGroups'
+import { todayIso } from './localDate'
 import type { ActivitySlot, StructuredActivity } from './activityStructure'
 
 export type CornerKey = 'technical' | 'physical' | 'social' | 'psychological'
@@ -602,11 +603,20 @@ export function sessionMinutes(s: { activities: Activity[] }): number {
 // ../lib/ageGroups over it (COACH-5). Not a parameter here, for the reason
 // the team is not one: newSessionCoverage.invariant.test.ts pins this
 // signature.
+// The name every new draft starts with, and the one name nobody chose.
+// Named rather than written twice so the guided builder can tell an
+// untouched name from one a coach wrote, and suggest over the first
+// without ever overwriting the second (src/lib/guidedSession.ts).
+export const NEW_SESSION_NAME = 'New Session'
+
 export function blankSession(coachId: string): Session {
   return {
     id: crypto.randomUUID(),
-    name: 'New Session',
-    date: '2026-06-16',
+    name: NEW_SESSION_NAME,
+    // TODAY, in the club's local calendar. It was a fixed literal until a
+    // production smoke test in September created a session dated 16 June;
+    // ./localDate is the one derivation both hand create paths now use.
+    date: todayIso(),
     time: '17:30',
     ageGroup: LEGACY_DEFAULT_AGE_GROUP,
     // No venue until someone picks one from the club's list. A seeded name

@@ -258,7 +258,7 @@ describe('the tripwire itself', () => {
       'routes/LiveSession.tsx': "renders a completed session's own finished screen",
       'routes/Programmes.tsx': 'counts completed programme weeks',
       'routes/ProgrammeDetail.tsx': 'counts completed programme weeks',
-      'hooks/useStartFromTemplate.ts': 'creates a new session as upcoming',
+      'lib/sessionFromTemplate.ts': 'creates a new session as upcoming',
       'components/ApplyProgrammeModal.tsx': 'creates new sessions as upcoming',
     }
     for (const f of Object.keys(READS_STATUS_FOR_SOMETHING_ELSE)) {
@@ -314,7 +314,7 @@ describe('nothing decides a session is live by reading the column', () => {
       'lib/queries.ts': 'reads the column, and the live view writes it through here',
       'lib/publicShare.ts': 'lists the field names a public share must never carry',
       'routes/LiveSession.tsx': "the driver's resume position, which is the column and not the lifecycle",
-      'hooks/useStartFromTemplate.ts': 'creates a session with the marker null',
+      'lib/sessionFromTemplate.ts': 'creates a session with the marker null',
       'components/ApplyProgrammeModal.tsx': 'creates sessions with the marker null',
     }
     const found = sourceFiles()

@@ -2,6 +2,7 @@
 // here, and none of it reaches the application: nothing under src/ imports
 // this file.
 import { blankSession } from '../../src/lib/data'
+import { isoDate } from '../../src/lib/localDate'
 import { ACTIVITY_PAGE_SIZE, activityQueryConditions } from '../../src/lib/activityView'
 import type { ActivityEvent, ActivityFilters } from '../../src/lib/activityView'
 import type {
@@ -411,10 +412,15 @@ export const fixtures = {
   state: harnessState,
 }
 
+// Rolls the local day over rather than adding 24 hours, so a clock change
+// lands on the right date, and formats through the one shared derivation
+// (src/lib/localDate.ts). It held a third copy of that formatting, which
+// is the copy that module's header says it exists to prevent; the
+// tripwire in newSessionDate.test.ts scans src/ and cannot see this file.
 function inDays(n: number): string {
   const d = new Date()
   d.setDate(d.getDate() + n)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return isoDate(d)
 }
 
 const session = (over: Partial<Session> & Pick<Session, 'id' | 'name'>): Session => ({

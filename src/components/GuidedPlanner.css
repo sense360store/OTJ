@@ -1,0 +1,140 @@
+/* COACH-14A: the guided session builder's own layout.
+
+   Phone first. Every rule here is single column by default and widens at
+   the 901px breakpoint the rest of the product uses, so a narrow phone
+   never depends on a media query having fired. Every step, radius, size
+   and colour is a token from src/styles.css: this file is on the design
+   system's owned lists, so a literal cannot come back to it.
+
+   Nothing here paints a control smaller than the hit area. The chips,
+   buttons and fields are the shared ones, which carry their own 44px;
+   the two surfaces this file invents, the entry choice and the shape
+   card, set --hit as their floor explicitly. */
+
+.guide { display: flex; flex-direction: column; gap: var(--space-16); max-width: 720px; }
+
+/* ---- the progress list ------------------------------------------- */
+
+.guide-steps { display: flex; align-items: center; gap: var(--space-4); list-style: none; margin: 0; padding: 0;
+  overflow-x: auto; }
+.guide-step { display: flex; align-items: center; gap: var(--space-8); flex: 0 0 auto; min-width: 0;
+  padding: var(--space-8) 0; color: var(--slate); font-size: var(--text-xs); font-weight: 700; }
+.guide-step-n { display: grid; place-items: center; width: 26px; height: 26px; flex: 0 0 26px;
+  border-radius: var(--radius-pill); border: 1px solid var(--slate-2); background: var(--card);
+  font-size: var(--text-xs); font-weight: 800; font-variant-numeric: tabular-nums; }
+/* ON A PHONE ONLY THE CURRENT STEP IS NAMED, and this is measured rather
+   than judged: four labels sharing 360px left "Session" and "Activities"
+   clipped mid word, which reads as a rendering fault rather than as
+   progress. The others keep their marker and give their name to
+   assistive technology instead, using the same technique as .sr-only in
+   src/styles.css. The negative margin that recipe carries is dropped: the
+   element is out of flow here, so it does nothing and would only be a step
+   off the scale. A wider screen shows all four, which is why this is the
+   base and the media query below widens it. */
+.guide-step.on { flex: 1 1 auto; }
+.guide-step:not(.on) .guide-step-label { position: absolute; width: 1px; height: 1px; padding: 0;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.guide-step-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The current step is a filled marker AND aria-current, never a hue
+   alone; a finished one is a filled marker with the ordinary label. */
+.guide-step.on { color: var(--ink); }
+.guide-step.on .guide-step-n { background: var(--navy); border-color: var(--navy); color: #fff; }
+.guide-step.done .guide-step-n { background: var(--bg-2); border-color: var(--ink-2); color: var(--ink-2); }
+
+/* ---- the step card ----------------------------------------------- */
+
+.guide-heading { font-family: var(--display); font-size: var(--text-xl); font-weight: 800; color: var(--ink);
+  margin-top: var(--space-4); }
+/* The heading takes focus when the step changes, and the shared
+   [tabindex]:focus-visible ring in src/styles.css is what draws it. A
+   second ring here would be a second implementation of the one thing the
+   design system says there is exactly one of. */
+.guide-hint { color: var(--slate); font-size: var(--text-sm); margin: var(--space-4) 0 var(--space-16); }
+.guide-body { display: flex; flex-direction: column; gap: 0; }
+.guide-problem { margin-top: var(--space-12); }
+.guide-kept { margin-top: var(--space-12); }
+
+/* Two fields side by side on anything wider than a small phone, and
+   stacked below it. Date and time are the only pair. */
+.guide-pair { display: flex; gap: var(--space-12); flex-wrap: wrap; }
+.guide-pair > .field { flex: 1 1 140px; min-width: 0; }
+
+/* A labelled group of chips is not a field with a control, so its label
+   is a span rather than a <label>; it takes the field label's own type
+   so the two read as one column of questions. */
+.guide-group-label { display: block; font-size: var(--text-sm); font-weight: 700; color: var(--slate);
+  margin-bottom: var(--space-4); }
+.guide-mins { gap: var(--space-8); }
+.guide-focuses { gap: var(--space-8); }
+.guide-mins-field input { max-width: 140px; }
+
+/* ---- the length and the running total ---------------------------- */
+
+.guide-target { display: flex; align-items: baseline; gap: var(--space-8); margin-bottom: var(--space-16); }
+.guide-target-big { font-family: var(--display); font-size: var(--text-display); font-weight: 900; color: var(--ink);
+  letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.guide-target-unit { font-size: var(--text-sm); font-weight: 700; color: var(--slate); }
+
+/* ---- the shape choice -------------------------------------------- */
+
+.guide-shapes { display: flex; flex-direction: column; gap: var(--space-8); }
+.guide-shape { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2);
+  min-height: var(--hit); width: 100%; text-align: left;
+  padding: var(--space-12) var(--space-16); border: 1px solid var(--slate-2); border-radius: var(--radius-sm);
+  background: var(--card); color: var(--ink);
+  transition: border-color var(--dur-fast), background var(--dur-fast); }
+.guide-shape:hover:not(:disabled) { border-color: var(--ink-2); }
+.guide-shape:disabled { opacity: .5; cursor: not-allowed; }
+/* Selected is a MARK, a doubled edge and a ground, never a hue on its
+   own: the dark theme's navy is a brighter blue than the unselected
+   grey rather than a stronger one, so border colour alone would read as
+   a difference without reading as a choice. The tick is in the markup
+   and aria-pressed is on the control. */
+.guide-shape.on { border-color: var(--navy); box-shadow: inset 0 0 0 1px var(--navy); background: var(--bg-2); }
+.guide-shape-name svg { width: 15px; height: 15px; flex: 0 0 auto; color: var(--royal); }
+.guide-shape-name { display: inline-flex; align-items: center; gap: var(--space-8); }
+.guide-shape-name { font-size: var(--text-md); font-weight: 800; }
+.guide-shape-note { font-size: var(--text-sm); color: var(--slate); font-weight: 600; }
+
+.guide-plan { list-style: none; margin: var(--space-16) 0 0; padding: 0;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.guide-plan li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-12);
+  padding: var(--space-8) var(--space-12); font-size: var(--text-sm); font-weight: 600; color: var(--ink-2);
+  border-top: 1px solid var(--line); }
+.guide-plan li:first-child { border-top: 0; }
+.guide-plan-mins { color: var(--slate); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ---- the footer --------------------------------------------------- */
+
+/* Back, Continue and the way out. Continue is the primary and sits
+   after Back in the source order, so tabbing runs backwards then
+   forwards; the exit is last because it leaves the flow. */
+.guide-foot { display: flex; align-items: center; gap: var(--space-8); flex-wrap: wrap; }
+.guide-foot .guide-exit { margin-left: auto; }
+.guide-foot-note { font-size: var(--text-xs); color: var(--slate); margin: 0; }
+
+/* ---- the entry choice --------------------------------------------- */
+
+.guide-entry { margin-bottom: var(--space-16); }
+.guide-entry-title { font-family: var(--display); font-size: var(--text-lg); font-weight: 800; color: var(--ink);
+  margin-bottom: var(--space-12); }
+.guide-entry-choices { display: flex; flex-direction: column; gap: var(--space-8); }
+.guide-choice { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2);
+  min-height: var(--hit); width: 100%; text-align: left;
+  padding: var(--space-12) var(--space-16); border: 1px solid var(--slate-2); border-radius: var(--radius-sm);
+  background: var(--card); color: var(--ink);
+  transition: border-color var(--dur-fast), background var(--dur-fast); }
+.guide-choice:hover:not(:disabled) { border-color: var(--ink-2); }
+.guide-choice:disabled { opacity: .5; cursor: not-allowed; }
+.guide-choice-name { display: inline-flex; align-items: center; gap: var(--space-8);
+  font-size: var(--text-md); font-weight: 800; }
+.guide-choice-name svg { width: 16px; height: 16px; flex: 0 0 auto; color: var(--royal); }
+.guide-choice-note { font-size: var(--text-sm); color: var(--slate); font-weight: 600; }
+
+@media (min-width: 901px) {
+  .guide-entry-choices { flex-direction: row; }
+  .guide-choice { flex: 1 1 0; }
+  .guide-step { flex: 1 1 0; font-size: var(--text-sm); }
+  .guide-step:not(.on) .guide-step-label { position: static; width: auto; height: auto; padding: 0;
+    clip: auto; border: 0; }
+}

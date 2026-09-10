@@ -61,7 +61,10 @@ const code = (src: string) =>
 
 // The three paths that BUILD a session nobody has edited yet, and so the
 // three that must ask the shared rule.
-const CREATE_PATHS = ['routes/Planner.tsx', 'hooks/useStartFromTemplate.ts', 'lib/spond.ts']
+// COACH-14A moved the Use template session builder out of the hook and
+// into lib/sessionFromTemplate.ts, so that is the create path now; the
+// hook is the wiring around it and still owns the WAIT (below).
+const CREATE_PATHS = ['routes/Planner.tsx', 'lib/sessionFromTemplate.ts', 'lib/spond.ts']
 
 // Where a profile team could actually be READ and handed to one of them.
 // Not the same list, and getting that wrong was this file's own first
@@ -73,6 +76,7 @@ const CREATE_PATHS = ['routes/Planner.tsx', 'hooks/useStartFromTemplate.ts', 'li
 const PROFILE_TEAM_FREE = [
   'routes/Planner.tsx',
   'hooks/useStartFromTemplate.ts',
+  'lib/sessionFromTemplate.ts',
   'components/PlanFromSpond.tsx',
 ]
 

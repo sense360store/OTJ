@@ -37,8 +37,23 @@ import {
   SourceLink,
 } from '../components/ui'
 import { ActivityListEditor, type SessionRowContent } from '../components/ActivityListEditor'
+import { CoveredTeamsField } from '../components/CoveredTeamsField'
+import { GuidedEntryChoice, GuidedPlanner } from '../components/GuidedPlanner'
 import { useAuthoringReturn, usePlanDrillAuthoring } from '../components/PlanDrillAuthoring'
 import { plannerDraft, readPlannerDraft, type PlannerDraft } from '../lib/planDrillAuthoring'
+import {
+  guidedEntryOffered,
+  GUIDED_ENTRY_FULL_LABEL,
+  GUIDED_ENTRY_FULL_NOTE,
+  GUIDED_ENTRY_GUIDE_LABEL,
+  GUIDED_ENTRY_GUIDE_NOTE,
+  GUIDED_ENTRY_TITLE,
+  PLANNER_GUIDE_MODE,
+  PLANNER_MODE_PARAM,
+  plannerModeFor,
+  sessionNameIsUntouched,
+  type PlannerMode,
+} from '../lib/guidedSession'
 import {
   createPlannerActions,
   logSessionWriteError,
@@ -69,6 +84,7 @@ import { RightsControl } from '../components/RightsControl'
 // week-plan editor alike. Re-exported so existing imports (and the suites
 // that pin the row's behaviour) keep their one path.
 export { ActivityCardView, AddActivityBar } from '../components/ActivityListEditor'
+export { CoveredTeamsField } from '../components/CoveredTeamsField'
 
 // The expanded card's media preview. An image opens the full-screen diagram
 // viewer; a video or YouTube clip opens the player overlay, the same patterns
@@ -267,86 +283,12 @@ export function PlannerHeaderView({
 
 type SessionFieldKey = 'name' | 'date' | 'time' | 'ageGroup' | 'focus' | 'space' | 'sourceUrl'
 
-// The covered teams control. Coverage is a set, not one team: a Thursday
-// night that runs Titans and Trojans together is the normal case, and the
-// register lists exactly what is ticked here. Nothing ticked is a real
-// state and says so, rather than being read as the whole club.
-export function CoveredTeamsField({
-  teams,
-  selected,
-  disabled,
-  readOnly,
-  onToggle,
-  onAll,
-}: {
-  teams: Team[]
-  selected: string[]
-  disabled: boolean
-  readOnly: boolean
-  onToggle: (teamId: string) => void
-  onAll: () => void
-}) {
-  const all = teams.length > 0 && teams.every((t) => selected.includes(t.id))
-  if (readOnly) {
-    const names = teams.filter((t) => selected.includes(t.id)).map((t) => t.name)
-    return (
-      <div className="field">
-        <label>Teams</label>
-        {names.length === 0 ? (
-          <span className="muted" style={{ fontSize: 13 }}>
-            Not set
-          </span>
-        ) : (
-          <div className="row wrap" style={{ gap: 6 }}>
-            {(all ? ['All teams'] : names).map((n) => (
-              <span key={n} className="pill">
-                {n}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-    )
-  }
-  return (
-    <div className="field">
-      <label>Teams</label>
-      <div className="row wrap" style={{ gap: 7 }}>
-        <button
-          type="button"
-          className={'chip' + (all ? ' on' : '')}
-          style={{ minHeight: 44 }}
-          aria-pressed={all}
-          disabled={disabled || teams.length === 0}
-          onClick={onAll}
-        >
-          All teams
-        </button>
-        {teams.map((t) => {
-          const on = selected.includes(t.id)
-          return (
-            <button
-              key={t.id}
-              type="button"
-              className={'chip' + (on ? ' on' : '')}
-              style={{ minHeight: 44 }}
-              aria-pressed={on}
-              disabled={disabled}
-              onClick={() => onToggle(t.id)}
-            >
-              {t.name}
-            </button>
-          )
-        })}
-      </div>
-      {selected.length === 0 && (
-        <span className="muted" style={{ fontSize: 12.5, marginTop: 6, display: 'block' }}>
-          No teams selected, so the register will list nobody.
-        </span>
-      )}
-    </div>
-  )
-}
+// COACH-14A: the covered teams control moved to
+// ../components/CoveredTeamsField, so the guided builder's first step asks
+// the same question with the same control. A component under components/
+// importing from routes/ would be a cycle, so the control moved down rather
+// than being written twice. Re-exported below, exactly as the shared
+// activity row is above, so every existing import path still resolves.
 
 // The planner's session details card: the totals header, every session field
 // and the tactics board control. Pulled out as a presentational component so
@@ -418,7 +360,19 @@ export function SessionFieldsView({
       </div>
       <div className="field">
         <label>Session name</label>
-        <input value={session.name} disabled={frozen} onChange={(e) => onField('name', e.target.value)} />
+        {/* The default name is real content rather than a placeholder, so
+            tapping in and typing used to append to it: production made a
+            session called "New SessionSmoke Test". Focusing selects it
+            when it is still the default, so typing replaces it; a name
+            somebody wrote is never selected out from under them. */}
+        <input
+          value={session.name}
+          disabled={frozen}
+          onFocus={(e) => {
+            if (sessionNameIsUntouched(e.target.value)) e.target.select()
+          }}
+          onChange={(e) => onField('name', e.target.value)}
+        />
       </div>
       <div className="row" style={{ gap: 10 }}>
         <div className="field" style={{ flex: 1 }}>
@@ -715,6 +669,39 @@ function PlannerEditor({
   const readOnly = !!existing && existing.coachId !== user?.id && !caps.has('sessions.manage')
   const owner = existing ? memberById[existing.coachId] : undefined
 
+  // COACH-14A. Which of the two surfaces is showing. It is read from the
+  // ADDRESS rather than held in state, so a refresh, a bookmark and the
+  // way back from the Drill Maker all land on the surface the coach left,
+  // and it is decided by one rule (plannerModeFor) that a read only
+  // viewer and an existing session can never pass. The rule is asked here
+  // rather than in the route shell because that is where `readOnly`
+  // exists; the shell has neither the capabilities nor the owner.
+  //
+  // Switching REPLACES the entry rather than pushing one. The planner has
+  // always had exactly one unsaved draft contract, which is that leaving
+  // the screen abandons the draft, and a pushed entry per mode switch
+  // would add a second: a browser Back that sometimes returns to the
+  // other surface with the draft intact and sometimes leaves. Switching
+  // mode is not leaving, so it leaves no trace in history.
+  const [params, setParams] = useSearchParams()
+  const mode = plannerModeFor({
+    requested: params.get(PLANNER_MODE_PARAM),
+    isExisting: !!existing,
+    readOnly,
+  })
+  const setMode = (next: PlannerMode) => {
+    const q = new URLSearchParams(params)
+    if (next === 'guide') q.set(PLANNER_MODE_PARAM, PLANNER_GUIDE_MODE)
+    else q.delete(PLANNER_MODE_PARAM)
+    setParams(q, { replace: true })
+  }
+  // The entry choice is a card ABOVE the planner, never a gate in front
+  // of it: the full form is on the same screen underneath, so nothing a
+  // coach could do before this slice now needs a press first. Pressing
+  // Use full planner puts the choice away and leaves them on the form
+  // they are already looking at.
+  const [chooserOpen, setChooserOpen] = useState(true)
+
   // A coach choosing the age group settles it, so the seed below never runs
   // over their choice. Codex, third finding, and the race is narrow but real:
   // while the club's list is still loading the control deliberately offers
@@ -785,7 +772,17 @@ function PlannerEditor({
   const authoring = usePlanDrillAuthoring<PlannerDraft>({
     host: 'planner',
     id: existing?.id ?? null,
-    returnPath: existing ? `/planner?sessionId=${existing.id}` : '/planner',
+    // COACH-14A: the guided surface is part of the address, so the way
+    // back from the Drill Maker returns to the step the coach left rather
+    // than to the full form. safeReturnPath allows it unchanged: its
+    // allowlist requires the prefix to be the whole segment, and
+    // '/planner?mode=guide' is '/planner' followed by a query. Nothing
+    // about the stash, the token or the boundary widened for this.
+    returnPath: existing
+      ? `/planner?sessionId=${existing.id}`
+      : mode === 'guide'
+        ? `/planner?${PLANNER_MODE_PARAM}=${PLANNER_GUIDE_MODE}`
+        : '/planner',
     activities: session.activities,
     onActivities: (activities) => setSession((s) => ({ ...s, activities })),
     // The draft is the session AND what the two reads had settled by the
@@ -930,6 +927,82 @@ function PlannerEditor({
     }
   }
 
+  // COACH-14A. The composer and the actions card are built once and
+  // mounted by whichever surface is showing. The guided builder's last
+  // step is the SAME activity list editor and the SAME actions card, over
+  // the same draft and the same guarded submit, so the two modes cannot
+  // drift into two editors or two ways of saving.
+  const composer = (
+    <>
+      {/* COACH-10: the one shared activity-list editor, mounted here and
+          by the week-plan editor. The planner supplies what only it owns:
+          the resolved row content, the empty state, the drag mechanics,
+          the busy freeze and the session-local stand-down. */}
+      <ActivityListEditor
+        activities={session.activities}
+        variant={{
+          kind: 'session',
+          readOnly,
+          busy,
+          empty: (
+            <div className="card" style={{ padding: 0 }}>
+              <Empty icon={Icon.layers} title="Empty session">
+                {readOnly ? 'No activities in this session yet.' : 'Add drills from the library or load a template to get started.'}
+              </Empty>
+            </div>
+          ),
+          expandedIdx,
+          onToggle: (i) => setExpandedIdx((cur) => (cur === i ? null : i)),
+          onStandDown: setStandDown,
+          draggingIdx: dragIdx,
+          dragHandlersFor: (i) => ({
+            onDragStart: () => {
+              dragFrom.current = i
+              setDragIdx(i)
+              // Collapse so the open index does not drift as rows move.
+              setExpandedIdx(null)
+            },
+            onDragEnter: () => reorder(i),
+            onDragEnd: () => {
+              dragFrom.current = null
+              setDragIdx(null)
+            },
+            onDragOver: (e) => e.preventDefault(),
+          }),
+          content: rowContent,
+        }}
+        onPhase={setPhase}
+        onDuration={setDur}
+        onRole={setRole}
+        onRemove={removeAct}
+        onAddLibrary={() => setAddOpen(true)}
+        onAddCustom={() => addActivities([{ phase: 'Skill', title: 'Custom activity', duration: 10 }])}
+        onNewDrill={readOnly ? undefined : authoring.onNewDrill}
+        onTurnIntoDrill={readOnly ? undefined : authoring.onTurnIntoDrill}
+      />
+      {authoring.note}
+    </>
+  )
+  const actionsCard = (
+      <PlannerActionsView
+        readOnly={readOnly}
+        isExisting={!!existing}
+        canStart={session.activities.length > 0}
+        pending={pendingAction}
+        failed={failedAction}
+        shareLabel={shareLabel}
+        shareNote={shareNote}
+        shareFeedback={shareFeedback}
+        onStart={start}
+        onSave={save}
+        onShare={onShare}
+        onSessionDay={() => nav('sessionDay', { sessionId: session.id })}
+        onCalendar={() => downloadSessionIcs(session, venues.find((v) => v.id === session.venueId)?.name ?? null)}
+        onLoadTemplate={() => nav('templates')}
+        onDelete={() => setDeleteOpen(true)}
+      />
+  )
+
   return (
     <div>
       <PlannerHeaderView
@@ -940,6 +1013,40 @@ function PlannerEditor({
         onBack={() => nav('sessions')}
       />
 
+      {mode === 'guide' ? (
+        <GuidedPlanner
+          session={session}
+          teams={teams}
+          ageGroups={clubAgeGroups}
+          busy={busy}
+          totalMinutes={sessionMinutes(session)}
+          onField={setField}
+          onToggleTeam={toggleTeam}
+          onAllTeams={allTeams}
+          onActivities={(activities) => setSession((s) => ({ ...s, activities }))}
+          onExit={() => {
+            // They have just said which surface they want, so do not ask
+            // again the moment they land on it.
+            setChooserOpen(false)
+            setMode('full')
+          }}
+          composer={composer}
+          actions={actionsCard}
+        />
+      ) : (
+        <>
+      {chooserOpen && guidedEntryOffered({ isExisting: !!existing, readOnly }) && (
+        <GuidedEntryChoice
+          title={GUIDED_ENTRY_TITLE}
+          guideLabel={GUIDED_ENTRY_GUIDE_LABEL}
+          guideNote={GUIDED_ENTRY_GUIDE_NOTE}
+          fullLabel={GUIDED_ENTRY_FULL_LABEL}
+          fullNote={GUIDED_ENTRY_FULL_NOTE}
+          disabled={busy}
+          onGuide={() => setMode('guide')}
+          onFull={() => setChooserOpen(false)}
+        />
+      )}
       <PlannerWorkspace busy={busy}>
         <div className="timeline-wrap">
           {/* A new session can start from a synced Spond event: picking one
@@ -974,53 +1081,7 @@ function PlannerEditor({
               )}
             </div>
           )}
-          {/* COACH-10: the one shared activity-list editor, mounted here and
-              by the week-plan editor. The planner supplies what only it owns:
-              the resolved row content, the empty state, the drag mechanics,
-              the busy freeze and the session-local stand-down. */}
-          <ActivityListEditor
-            activities={session.activities}
-            variant={{
-              kind: 'session',
-              readOnly,
-              busy,
-              empty: (
-                <div className="card" style={{ padding: 0 }}>
-                  <Empty icon={Icon.layers} title="Empty session">
-                    {readOnly ? 'No activities in this session yet.' : 'Add drills from the library or load a template to get started.'}
-                  </Empty>
-                </div>
-              ),
-              expandedIdx,
-              onToggle: (i) => setExpandedIdx((cur) => (cur === i ? null : i)),
-              onStandDown: setStandDown,
-              draggingIdx: dragIdx,
-              dragHandlersFor: (i) => ({
-                onDragStart: () => {
-                  dragFrom.current = i
-                  setDragIdx(i)
-                  // Collapse so the open index does not drift as rows move.
-                  setExpandedIdx(null)
-                },
-                onDragEnter: () => reorder(i),
-                onDragEnd: () => {
-                  dragFrom.current = null
-                  setDragIdx(null)
-                },
-                onDragOver: (e) => e.preventDefault(),
-              }),
-              content: rowContent,
-            }}
-            onPhase={setPhase}
-            onDuration={setDur}
-            onRole={setRole}
-            onRemove={removeAct}
-            onAddLibrary={() => setAddOpen(true)}
-            onAddCustom={() => addActivities([{ phase: 'Skill', title: 'Custom activity', duration: 10 }])}
-            onNewDrill={readOnly ? undefined : authoring.onNewDrill}
-            onTurnIntoDrill={readOnly ? undefined : authoring.onTurnIntoDrill}
-          />
-          {authoring.note}
+          {composer}
         </div>
 
         <div className="planner-side">
@@ -1071,25 +1132,11 @@ function PlannerEditor({
             onLink={(id) => setSession((s) => ({ ...s, spondEventId: id }))}
           />
 
-          <PlannerActionsView
-            readOnly={readOnly}
-            isExisting={!!existing}
-            canStart={session.activities.length > 0}
-            pending={pendingAction}
-            failed={failedAction}
-            shareLabel={shareLabel}
-            shareNote={shareNote}
-            shareFeedback={shareFeedback}
-            onStart={start}
-            onSave={save}
-            onShare={onShare}
-            onSessionDay={() => nav('sessionDay', { sessionId: session.id })}
-            onCalendar={() => downloadSessionIcs(session, venues.find((v) => v.id === session.venueId)?.name ?? null)}
-            onLoadTemplate={() => nav('templates')}
-            onDelete={() => setDeleteOpen(true)}
-          />
+          {actionsCard}
         </div>
       </PlannerWorkspace>
+        </>
+      )}
 
       {addOpen && (
         <AddDrillModal

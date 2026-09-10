@@ -35,7 +35,7 @@ describe('a role authored in a week plan reaches the dated session', () => {
     const templateRows = toTemplateActivityRows([authored])
     expect(templateRows[0].slot).toBe('station')
     // Read back and deep copied into a new dated session, which is what
-    // useStartFromTemplate does.
+    // sessionFromTemplate does.
     const fromTemplate = toActivity(templateRows[0])
     const copied = JSON.parse(JSON.stringify([fromTemplate])) as Activity[]
     expect(copied[0].slot).toBe('station')
@@ -103,7 +103,7 @@ describe('the total a coach reads follows the stand-down through persistence', (
 
 describe('the template-to-session copy stays a whole copy', () => {
   it('copies the activities wholesale rather than rebuilding them field by field', () => {
-    // A tripwire, not a proof. useStartFromTemplate deep copies the mapped
+    // A tripwire, not a proof. sessionFromTemplate deep copies the mapped
     // activities, which is exactly why `slot` reaches a new session without
     // that hook knowing the key exists. Rewriting it to pick fields would
     // silently drop every key added after the rewrite, and the path tests
@@ -113,8 +113,12 @@ describe('the template-to-session copy stays a whole copy', () => {
     // WHAT THIS CANNOT CATCH: a rewrite that still deep copies but then
     // deletes or overwrites a key afterwards, and any change to the hook's
     // behaviour that does not touch this line's shape.
-    const src = readFileSync(resolve(__dirname, '../hooks/useStartFromTemplate.ts'), 'utf8')
-    expect(src).toContain('JSON.parse(JSON.stringify(t.activities))')
+    // COACH-14A moved the session builder out of the hook and into
+    // ./sessionFromTemplate, so the copy it makes is a tested function
+    // now as well as a read one. The read stays: it is what notices the
+    // copy being replaced by a field by field rebuild.
+    const src = readFileSync(resolve(__dirname, './sessionFromTemplate.ts'), 'utf8')
+    expect(src).toContain('JSON.parse(JSON.stringify(input.template.activities))')
     expect(src).not.toMatch(/activities:\s*t\.activities\.map\(/)
   })
 })

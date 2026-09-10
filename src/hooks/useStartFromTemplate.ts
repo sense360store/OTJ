@@ -15,10 +15,9 @@ import { useNav } from './useNav'
 import { useGuardedSubmit } from './useGuardedSubmit'
 import { useSessions } from '../context/SessionsContext'
 import { useClubAgeGroups, useTeams } from '../lib/queries'
-import { defaultAgeGroup } from '../lib/ageGroups'
-import { newSessionCoverage } from '../lib/sessionTeams'
 import { stableCreateId } from '../lib/sessionSubmit'
-import type { Activity, Session, Template } from '../lib/data'
+import { sessionFromTemplate } from '../lib/sessionFromTemplate'
+import type { Session, Template } from '../lib/data'
 
 export function useStartFromTemplate() {
   const nav = useNav()
@@ -49,41 +48,13 @@ export function useStartFromTemplate() {
     onSuccess: (saved) => nav('planner', { sessionId: saved.id }),
   })
   const start = (t: Template) => {
-    const session: Session = {
+    const session = sessionFromTemplate({
       id: stableCreateId(ids.current, t.id),
-      name: t.name,
-      date: '2026-06-16',
-      time: '17:30',
-      ageGroup: defaultAgeGroup(clubAgeGroups),
-      venue: '',
-      focus: t.focus,
-      status: 'upcoming',
-      activities: JSON.parse(JSON.stringify(t.activities)) as Activity[],
+      template: t,
       coachId: user?.id ?? '',
-      teamId: null,
-      intentions: [...t.intentions],
-      space: '',
-      sourceUrl: '',
-      sourceLabel: '',
-      programmeId: null,
-      programmeWeek: null,
-      liveActivityIndex: null,
-      liveActivityStartedAt: null,
-      spondEventId: null,
-      boardId: null,
-      venueId: null,
-      // The whole club, the same default a fresh planner draft starts from
-      // and through the same rule. It used to be the coach's own team when
-      // their profile named one, which is a personal default about the
-      // coach standing in for a statement about the night: a coach whose
-      // profile said Trojans got a Trojans session out of a club template
-      // without being asked. Never left unset: this session is saved
-      // before the coach sees it, and an unset session's register lists
-      // nobody, which is what `ready` protects.
-      teamIds: newSessionCoverage(teams.map((t) => t.id)),
-      // Club only until classified; the upsert never writes the column.
-      rights: 'internal_only',
-    }
+      allTeamIds: teams.map((team) => team.id),
+      clubAgeGroups,
+    })
     void submit({ templateId: t.id, session })
   }
   return {
