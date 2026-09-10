@@ -506,7 +506,3 @@ export function guideStepProblem(
   }
   return null
 }
-
-// The teams line the first step states rather than leaves silent. The
-// planner's own wording for an empty coverage, so the two screens agree.
-export const GUIDE_NO_TEAMS_NOTE = 'No teams selected, so the register will list nobody.'
