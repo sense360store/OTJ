@@ -1500,6 +1500,47 @@ function toDrillWriteRow(input: DrillInput) {
   }
 }
 
+// The created drill written into the list read, in the order that read
+// returns. Pure, so the ordering and the duplicate rule are testable.
+//
+// A LIST THAT DOES NOT EXIST IS LEFT ALONE, and that is the one place this
+// deliberately differs from applySessionUpsert, which seeds from nothing.
+// `undefined` here means the drills read has never landed, and in that state
+// useDrills is PENDING and every reader already renders its own waiting
+// state; creating a one entry list would make that read report success while
+// holding one drill, so the Library would paint a library of one. An updater
+// returning undefined is a no-op in TanStack Query, which is exactly the
+// wanted behaviour. Nothing is lost by it: the settled invalidation below
+// refetches, and the first read to land carries the new drill anyway.
+//
+// Keyed on id rather than appended blindly, so a refetch that has already
+// landed with this drill in it cannot produce a duplicate row, and a repeat
+// of the same seed is a no-op.
+export function applyInsertedDrill(list: Drill[] | undefined, drill: Drill): Drill[] | undefined {
+  if (!list) return undefined
+  const i = list.findIndex((d) => d.id === drill.id)
+  const next = i === -1 ? [...list, drill] : list.map((d) => (d.id === drill.id ? drill : d))
+  // The same order useDrills itself returns, so the seeded row sits where the
+  // refetch will put it and the list does not visibly reshuffle underneath a
+  // coach a moment later.
+  return newestFirst(next)
+}
+
+// Both drill reads seeded from the row the insert returned. Exported so the
+// set of seeded keys is pinned in a unit test, the way invalidatePlayerReads
+// pins the set of invalidated ones.
+//
+// TWO KEYS AND NO MORE. ['drills'] is the list every drill map reads, and
+// ['drills', id] is the per drill read the Drill Maker opens on, which is
+// where Save and draw it navigates a beat later. Nothing else is written: no
+// other entity's cache, and no key derived from a club, because these reads
+// are deliberately global literals (see the cache boundary in CLAUDE.md) and
+// this seam does not get to invent a scoped one.
+export function seedInsertedDrill(qc: ReturnType<typeof useQueryClient>, drill: Drill) {
+  qc.setQueryData<Drill[]>(['drills'], (old) => applyInsertedDrill(old, drill))
+  qc.setQueryData<Drill | null>(['drills', drill.id], drill)
+}
+
 export function useInsertDrill() {
   const qc = useQueryClient()
   const { user, profile } = useAuth()
@@ -1516,6 +1557,48 @@ export function useInsertDrill() {
       if (error) throw contentWriteError(error)
       return toDrill(data as unknown as DrillRow)
     },
+    // COACH-11 defect. The insert used to invalidate and nothing else, so a
+    // drill created from a plan was absent from the drill map until the
+    // refetch landed, while useDrills still held its previous list and was
+    // therefore not pending. useActivityTitle reads exactly that pair and
+    // answers 'Removed drill', so the row a coach had just created announced
+    // itself as deleted. On Add to plan that lasted one round trip; on Save
+    // and draw it the planner unmounts, so the invalidation only marked the
+    // query stale, and a coach returning inside the cache retention window
+    // remounted onto the pre insert list and met the same wrong label on the
+    // row they had just drawn.
+    //
+    // Fixed by making the created drill RESOLVABLE rather than by making the
+    // label forgiving. The alternatives were both worse. Falling back to the
+    // activity's own title cannot work here at all: the Turn into a drill
+    // path strips that title as it sets the drill id, so there is nothing to
+    // fall back to, and reinstating it would keep a second copy of a name the
+    // drill now owns. Widening the placeholder guard to any refetch would
+    // leave a genuinely removed drill flickering to an ellipsis on every
+    // window focus, and would still show an ellipsis rather than the name the
+    // coach had just typed.
+    //
+    // ON SUCCESS, NOT OPTIMISTICALLY. The seed is the row the database
+    // returned, with its real id, created_at and rights, so there is no
+    // guessed entry to roll back and a refused write seeds nothing. It also
+    // keeps this clear of the hazard the cache boundary in CLAUDE.md names:
+    // the dangerous shape is an onError rollback writing a previous
+    // identity's row onto a global key, which a sign out makes likely. A
+    // success means RLS accepted the write under the identity that made it,
+    // and `qc` is the client this hook rendered under, so a callback that
+    // outlives an identity change writes to the client that change abandoned.
+    //
+    // The order is hook onSuccess, hook onSettled, then the callbacks
+    // DrillFormModal passes to mutate, which is what puts the drill in the
+    // cache before the plan builds its activity and before Save and draw it
+    // navigates. The invalidation in between does not undo the seed:
+    // invalidateQueries marks a query stale and refetches it, and never
+    // clears the data it holds.
+    onSuccess: (created) => seedInsertedDrill(qc, created),
+    // Unchanged, and still the authority. The seed is a head start, never a
+    // substitute: a refetch already in flight when the insert committed can
+    // still land a pre insert list over the seeded one, and this is what
+    // corrects it.
     onSettled: () => qc.invalidateQueries({ queryKey: ['drills'] }),
   })
 }
