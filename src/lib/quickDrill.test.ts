@@ -116,6 +116,17 @@ describe('validation', () => {
     }
   })
 
+  it('caps at ninety minutes, the bound the drill form has always applied', () => {
+    // Stated as the NUMBER because the boundary test below reads the
+    // constant and adds one, which proves the rule fires at whatever the
+    // constant says and never that the constant is 90. The drill form's two
+    // minutes inputs carry `max={90}` literally (src/components/
+    // DrillFormModal.tsx); this is the assertion that notices if the two
+    // answers drift apart. Wiring the form to read the constant belongs to
+    // the UI slice, not here.
+    expect(QUICK_DRILL_MAX_MINUTES).toBe(90)
+  })
+
   it('refuses more minutes than the drill form has ever allowed', () => {
     expect(validateQuickDrill(fields({ duration: QUICK_DRILL_MAX_MINUTES })).length).toBe(0)
     const problems = validateQuickDrill(fields({ duration: QUICK_DRILL_MAX_MINUTES + 1 }))
@@ -152,6 +163,33 @@ describe('the insert payload', () => {
 
   it('leaves the drill unclassified rather than filing it under Technical unseen', () => {
     expect(quickDrillInput(fields()).corner).toBeNull()
+  })
+
+  it('leaves every OTHER classification field at its stated default, by value', () => {
+    // The companion to the corner assertion above, and the reason it is by
+    // VALUE rather than by key presence: a coach never sees any of these
+    // controls, so a default that changed here would file every quick drill
+    // somewhere nobody chose and nothing on screen would say so. The
+    // completeness test further down proves the KEYS are all sent; only
+    // this one proves WHAT they are sent as.
+    const input = quickDrillInput(fields())
+    // Not nullable at DrillInput and sent unconditionally by the write
+    // mapper (toDrillWriteRow sends `level: input.level`, with no `|| null`),
+    // so SOME level is always stored whatever this returns. 'Foundation' is
+    // the drill form's own create default, and it is a default rather than a
+    // coach's answer, which matters because the library's Level filter is an
+    // exact match.
+    expect(input.level).toBe('Foundation')
+    // Empty, never a placeholder word. Each of these stores null through the
+    // write mapper's `|| null`, which reads as "not classified"; a filler
+    // value would read as a coach's answer and would match a library filter.
+    expect(input.skill).toBe('')
+    expect(input.theme).toBe('')
+    expect(input.format).toBe('')
+    // Empty lists, not seeded ones. A tag or an age group invented here
+    // would put the drill in a filter nobody picked.
+    expect(input.tags).toEqual([])
+    expect(input.ages).toEqual([])
   })
 
   it('claims no third party source, so nothing is attributed to anyone', () => {
