@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { QueryClient } from '@tanstack/react-query'
 import {
   alreadyImportedFrom,
+  applyInsertedDrill,
   applySessionUpsert,
   createAttemptTracker,
   deletedExactlyOne,
@@ -16,6 +18,7 @@ import {
   oversizeMessage,
   partitionDrillsByUsage,
   revertSessionUpsert,
+  seedInsertedDrill,
   sessionExistsInCache,
   sessionWriteError,
   SPOND_LINK_UNIQUE_INDEX,
@@ -36,6 +39,7 @@ import {
   type ProgrammeRow,
   type SessionRow,
 } from './queries'
+import type { Drill } from './data'
 
 // A complete session row, the shape Supabase returns. Each test overrides only
 // the fields it asserts on.
@@ -873,5 +877,191 @@ describe('invalidatePlayerReads', () => {
     expect(keys).toContainEqual(['players'])
     expect(keys).toContainEqual(['boards'])
     expect(invalidateQueries).toHaveBeenCalledTimes(3)
+  })
+})
+
+// =====================================================================
+// COACH-11 defect: a drill created from a plan announced itself as
+// 'Removed drill'.
+//
+// THE FAULT. useInsertDrill invalidated ['drills'] and did nothing else, so
+// between the insert landing and the refetch returning, the drill map had no
+// such drill while useDrills still held its previous list and was therefore
+// not pending. useActivityTitle reads exactly that pair and answers
+// 'Removed drill' for a drillId it cannot resolve once the read has settled.
+// On Save and draw it the planner unmounts, so the invalidation only marked
+// the query stale and a coach returning inside the cache retention window met
+// the same wrong label on the row they had just drawn.
+//
+// THE FIX under test is that the created drill becomes RESOLVABLE at once,
+// from the row the database returned. The label rule is untouched.
+// =====================================================================
+describe('applyInsertedDrill', () => {
+  const listed = (over: Partial<DrillRow> = {}) => toDrill(drillRow(over))
+
+  it('puts the created drill into the list, so a drill map resolves it at once', () => {
+    const created = listed({ id: 'new', created_at: '2026-06-01T00:00:00Z' })
+    const next = applyInsertedDrill([listed({ id: 'a' })], created)
+    expect(next?.map((d) => d.id)).toContain('new')
+    // The drill map is built by id off this list, so presence here IS
+    // resolvability: the title resolver's `byId[act.drillId]` now hits.
+    expect(next?.find((d) => d.id === 'new')?.title).toBe('Rondo')
+  })
+
+  it('places it in the order the drills read itself returns', () => {
+    // useDrills returns newestFirst, so a seeded row must land where the
+    // refetch will put it or the list reshuffles under the coach a beat later.
+    const older = listed({ id: 'old', created_at: '2026-01-01T00:00:00Z' })
+    const newer = listed({ id: 'new', created_at: '2026-09-01T00:00:00Z' })
+    expect(applyInsertedDrill([older], newer)?.map((d) => d.id)).toEqual(['new', 'old'])
+    const oldest = listed({ id: 'oldest', created_at: '2025-01-01T00:00:00Z' })
+    expect(applyInsertedDrill([listed({ id: 'a', created_at: '2026-01-01T00:00:00Z' })], oldest)?.map((d) => d.id)).toEqual(
+      ['a', 'oldest'],
+    )
+  })
+
+  it('replaces rather than duplicates when a refetch already carried the drill', () => {
+    const created = listed({ id: 'new', title: 'Passing squares' })
+    const already = listed({ id: 'new', title: 'stale copy' })
+    const next = applyInsertedDrill([already, listed({ id: 'a' })], created)
+    expect(next?.filter((d) => d.id === 'new')).toHaveLength(1)
+    expect(next?.find((d) => d.id === 'new')?.title).toBe('Passing squares')
+  })
+
+  it('is idempotent, so seeding the same drill twice changes nothing', () => {
+    const created = listed({ id: 'new' })
+    const once = applyInsertedDrill([listed({ id: 'a' })], created)
+    expect(applyInsertedDrill(once, created)).toEqual(once)
+  })
+
+  it('LEAVES A LIST THAT DOES NOT EXIST ALONE, rather than inventing a library of one', () => {
+    // undefined means the drills read has never landed. In that state
+    // useDrills is pending and every reader already shows its own waiting
+    // state; seeding here would make that read report success holding one
+    // drill, and the Library would paint a library of one. An updater
+    // returning undefined is a no-op in TanStack Query.
+    expect(applyInsertedDrill(undefined, listed({ id: 'new' }))).toBeUndefined()
+  })
+
+  it('does not mutate the list it was given', () => {
+    const list = [listed({ id: 'a' })]
+    applyInsertedDrill(list, listed({ id: 'new' }))
+    expect(list.map((d) => d.id)).toEqual(['a'])
+  })
+
+  it('touches no other drill in the list', () => {
+    const a = listed({ id: 'a', title: 'A' })
+    const b = listed({ id: 'b', title: 'B' })
+    const next = applyInsertedDrill([a, b], listed({ id: 'new' }))
+    expect(next?.find((d) => d.id === 'a')).toEqual(a)
+    expect(next?.find((d) => d.id === 'b')).toEqual(b)
+  })
+})
+
+describe('seedInsertedDrill', () => {
+  const created = toDrill(drillRow({ id: 'new', title: 'Passing squares' }))
+  const other = toDrill(drillRow({ id: 'a' }))
+
+  it('makes the drill resolvable through BOTH reads without another request', () => {
+    const qc = new QueryClient()
+    qc.setQueryData(['drills'], [other])
+    seedInsertedDrill(qc, created)
+    // The list every drill map reads.
+    expect(qc.getQueryData<Drill[]>(['drills'])?.map((d) => d.id)).toContain('new')
+    // The per drill read the Drill Maker opens on, which is where Save and
+    // draw it navigates a beat later.
+    expect(qc.getQueryData<Drill>(['drills', 'new'])?.title).toBe('Passing squares')
+    qc.clear()
+  })
+
+  it('writes EXACTLY the two documented keys and nothing else', () => {
+    // The club/query boundary. These reads are global literals by design (see
+    // the cache boundary in CLAUDE.md); this seam does not get to invent a
+    // club scoped key, and it must not reach into any other entity's cache.
+    const qc = new QueryClient()
+    qc.setQueryData(['drills'], [other])
+    qc.setQueryData(['sessions'], [{ id: 's1' }])
+    qc.setQueryData(['media'], [{ id: 'm1' }])
+    seedInsertedDrill(qc, created)
+    const keys = qc.getQueryCache().getAll().map((q) => q.queryKey)
+    expect(keys).toContainEqual(['drills'])
+    expect(keys).toContainEqual(['drills', 'new'])
+    // Nothing new appeared beyond those two, and the neighbours are untouched.
+    expect(keys).toHaveLength(4)
+    expect(qc.getQueryData(['sessions'])).toEqual([{ id: 's1' }])
+    expect(qc.getQueryData(['media'])).toEqual([{ id: 'm1' }])
+    qc.clear()
+  })
+
+  it('keys both reads exactly as the reads themselves key them', () => {
+    // useDrills reads ['drills'] and useDrill reads ['drills', id]. A seed
+    // under any other shape, a club scoped key among them, would write where
+    // nothing is reading and the defect would survive the fix silently.
+    const qc = new QueryClient()
+    qc.setQueryData(['drills'], [other])
+    seedInsertedDrill(qc, created)
+    const keys = qc
+      .getQueryCache()
+      .getAll()
+      .map((q) => q.queryKey)
+    expect(keys.sort()).toEqual([['drills'], ['drills', 'new']])
+    qc.clear()
+  })
+
+  it('seeds the per drill read even when the list has never loaded', () => {
+    // The two keys answer different questions. A list nobody has fetched
+    // stays absent, but the drill the database just returned is still the
+    // authoritative answer to "what is drill new", which is all the Drill
+    // Maker asks.
+    const qc = new QueryClient()
+    seedInsertedDrill(qc, created)
+    expect(qc.getQueryData(['drills'])).toBeUndefined()
+    expect(qc.getQueryData<Drill>(['drills', 'new'])?.id).toBe('new')
+    qc.clear()
+  })
+})
+
+// A tripwire over the wiring, not a proof of it. The mutation's options are
+// only reachable through React and this project has no DOM under test, so
+// what is checked here is the source text of the three drill writes. It
+// catches the realistic regressions (the seed moved to a callback that runs
+// on failure, the invalidation dropped for the seed, the seed copied onto
+// edit or delete) and it cannot catch a seed reached through a variable or a
+// callback assembled elsewhere.
+describe('the drill writes are wired as intended', () => {
+  const src = readFileSync(join(import.meta.dirname, 'queries.ts'), 'utf8')
+  const body = (name: string) => {
+    const start = src.indexOf(`export function ${name}()`)
+    expect(start).toBeGreaterThan(-1)
+    return src.slice(start, src.indexOf('\n}\n', start))
+  }
+
+  it('seeds the cache ONLY on success, so a refused write seeds nothing', () => {
+    const insert = body('useInsertDrill')
+    expect(insert).toMatch(/onSuccess: \(created\) => seedInsertedDrill\(qc, created\)/)
+    // The seed appears once, and inside onSuccess. A mutation with no
+    // onMutate and no onError has no callback that can run on failure, which
+    // is what makes "a refused write seeds nothing" structural rather than
+    // a promise.
+    expect(insert.match(/seedInsertedDrill/g)).toHaveLength(1)
+    // Matched as an option key at the start of its line, so the prose above
+    // it may discuss either without tripping this.
+    expect(insert).not.toMatch(/^\s*(onMutate|onError):/m)
+  })
+
+  it('still invalidates the drill list on settle, which stays the authority', () => {
+    expect(body('useInsertDrill')).toMatch(/onSettled: \(\) => qc\.invalidateQueries\(\{ queryKey: \['drills'\] \}\)/)
+  })
+
+  it('leaves editing a drill exactly as it was', () => {
+    const update = body('useUpdateDrill')
+    expect(update).not.toMatch(/seedInsertedDrill|setQueryData/)
+    expect(update).toMatch(/onSettled: \(\) => qc\.invalidateQueries\(\{ queryKey: \['drills'\] \}\)/)
+  })
+
+  it('leaves deleting a drill exactly as it was', () => {
+    const del = body('useDeleteDrill')
+    expect(del).not.toMatch(/seedInsertedDrill|setQueryData/)
+    expect(del).toMatch(/onSettled: \(\) => qc\.invalidateQueries\(\{ queryKey: \['drills'\] \}\)/)
   })
 })
